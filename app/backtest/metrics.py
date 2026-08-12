@@ -39,7 +39,7 @@ def calculate_metrics(
     arr = np.asarray(returns)
     wins = arr[arr > 0]
     losses = arr[arr <= 0]
-    equity = np.cumprod(1 + arr)
+    equity = np.concatenate(([1.0], np.cumprod(1 + arr)))
     peaks = np.maximum.accumulate(equity)
     downside = arr[arr < 0].std() if np.any(arr < 0) else 0
     total = float(equity[-1] - 1)

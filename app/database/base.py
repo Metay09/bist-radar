@@ -57,6 +57,8 @@ class PaperTradeRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     trade_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
+    portfolio_id: Mapped[str] = mapped_column(String(40), default="paper-default")
+    strategy_id: Mapped[str] = mapped_column(String(40), default="radar-v1")
     active_symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
     signal_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -72,7 +74,43 @@ class PaperTradeRow(Base):
     fees: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=Decimal("0"))
     slippage: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=Decimal("0"))
     net_return: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=Decimal("0"))
-    __table_args__ = (UniqueConstraint("active_symbol", name="uq_paper_trade_active_symbol"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "strategy_id", "active_symbol", name="uq_paper_trade_scope_active"
+        ),
+    )
+
+
+class ReplayRunRow(Base):
+    __tablename__ = "replay_runs"
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_processed_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20))
+    config_hash: Mapped[str] = mapped_column(String(64), index=True)
+    config_snapshot: Mapped[dict[str, object]] = mapped_column(JSON)
+    result: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ReplayTradeRow(Base):
+    __tablename__ = "replay_trades"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True)
+    portfolio_id: Mapped[str] = mapped_column(String(40))
+    strategy_id: Mapped[str] = mapped_column(String(40))
+    symbol: Mapped[str] = mapped_column(String(16))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ReplayEquityRow(Base):
+    __tablename__ = "replay_equity"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    equity: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    peak_equity: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    drawdown: Mapped[Decimal] = mapped_column(Numeric(20, 8))
 
 
 def engine() -> Engine:

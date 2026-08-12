@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     max_position_percent: float = 20
     commission_bps: float = 10
     slippage_bps: float = 5
+    execution_model: Literal["NEXT_BAR_OPEN"] = "NEXT_BAR_OPEN"
+    max_entry_gap_percent: float = 3
+    intrabar_ambiguity_policy: Literal["STOP_FIRST"] = "STOP_FIRST"
+    max_open_positions: int = 5
+    max_total_open_risk_percent: float = 3
+    reject_possible_corporate_action: bool = True
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)

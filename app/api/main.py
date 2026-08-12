@@ -2,14 +2,21 @@ import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from decimal import Decimal
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import desc, select, text
 
 from app import LIVE_TRADING
 from app.api.service import service
+from app.backtest.replay import HistoricalReplayEngine
+from app.backtest.replay_models import ExecutionOrder, Timeframe
+from app.backtest.repository import ReplayRepository
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.data.historical import CsvHistoricalProvider, SymbolMetadata
 from app.database.base import EventRow, SessionLocal
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
@@ -29,6 +36,35 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name, description=DISCLAIMER, lifespan=lifespan)
 ledger = PaperLedger()
 paper_repository = PaperTradeRepository()
+replay_repository = ReplayRepository()
+
+
+class ReplayRequest(BaseModel):
+    symbols: list[str] = ["RALLY"]
+    timeframe: Timeframe = Timeframe.D1
+    initial_equity: Decimal = Decimal("100000")
+
+
+def demo_strategy(symbol: str, visible: Any) -> ExecutionOrder | None:
+    if len(visible) != 220:
+        return None
+    bar = visible.iloc[-1]
+    timestamp = bar.timestamp.to_pydatetime()
+    entry = Decimal(str(bar.close))
+    return ExecutionOrder(
+        f"{symbol}-{timestamp.isoformat()}",
+        f"radar-v1:{symbol}:{timestamp.isoformat()}",
+        "paper-default",
+        "radar-v1",
+        symbol,
+        timestamp,
+        entry,
+        entry * Decimal("0.97"),
+        entry * Decimal("1.05"),
+        entry * Decimal("1.10"),
+        85,
+        100,
+    )
 
 
 def database_ok() -> bool:
@@ -119,3 +155,46 @@ def system_status() -> dict[str, object]:
         "takas": "TAKAS_DATA_UNAVAILABLE",
         "trading_mode": "paper",
     }
+
+
+@app.post("/replay")
+def create_replay(request: ReplayRequest) -> dict[str, object]:
+    metadata = {
+        symbol: SymbolMetadata(symbol) for symbol in service.symbols if symbol != "BAD_DATA"
+    }
+    engine = HistoricalReplayEngine(
+        CsvHistoricalProvider(service.provider.root), metadata, demo_strategy
+    )
+    try:
+        result = engine.run(request.symbols, request.timeframe, None, None, request.initial_equity)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    replay_repository.save(
+        result,
+        {"timeframe": request.timeframe.value, "initial_equity": str(request.initial_equity)},
+    )
+    return {"run_id": result.run_id, "status": "COMPLETED"}
+
+
+@app.get("/replay/{run_id}")
+def get_replay(run_id: str) -> dict[str, object]:
+    result = replay_repository.run(run_id)
+    if result is None:
+        raise HTTPException(404, "replay not found")
+    return result
+
+
+@app.get("/replay/{run_id}/trades")
+def replay_trades(run_id: str) -> list[dict[str, object]]:
+    return replay_repository.trades(run_id)
+
+
+@app.get("/replay/{run_id}/performance")
+def replay_performance_endpoint(run_id: str) -> dict[str, object]:
+    result = get_replay(run_id)
+    return result["performance"]  # type: ignore[return-value]
+
+
+@app.get("/replay/{run_id}/equity")
+def replay_equity(run_id: str) -> list[dict[str, object]]:
+    return replay_repository.equity(run_id)

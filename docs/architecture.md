@@ -27,3 +27,5 @@ PostgreSQL is the container database; SQLite is the zero-dependency local defaul
 Radar V1 weights are trend 15, momentum 15, RVOL 20, breakout 15, relative strength 10, volatility 5, regime 10, risk/reward 10. Every component and reason is returned. Risk-off penalizes rather than silently overrides, while any safety/data gate vetoes the signal.
 
 Backtests use only completed bars. A signal at close t executes at open t+1. Parameter train/validation/out-of-sample boundaries can be layered over the strategy interface; optimization is intentionally absent in V1. Historical constituent membership is required to control survivorship bias.
+
+Historical replay injects a `ReplayClock`, historical provider and signal strategy. The execution state machine rejects invalid transitions. Persistent run checkpoints contain `run_id`, last timestamp, status, immutable config snapshot/hash; trade idempotency is keyed by strategy/symbol/signal time. Intrabar ordering is unknowable from OHLC, therefore the documented default is conservative `STOP_FIRST`.

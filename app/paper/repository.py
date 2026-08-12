@@ -63,6 +63,8 @@ class PaperTradeRepository:
         row = PaperTradeRow(
             trade_id=trade.trade_id,
             symbol=trade.symbol,
+            portfolio_id="paper-default",
+            strategy_id="radar-v1",
             active_symbol=trade.symbol,
             signal_time=trade.signal_time,
             entry_time=trade.entry_time,

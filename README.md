@@ -31,6 +31,12 @@ Tüm örnekler `.env.example` dosyasındadır. Varsayılanlar: veri kalitesi 90,
 
 Paper trade ledger PostgreSQL üzerinde kalıcıdır. `active_symbol` unique constraint'i aynı sembolde yalnız bir açık işleme izin verir; repository işlemleri transaction içinde atomik çalışır. API restart kayıtları kaybettirmez.
 
+## Historical replay
+
+Replay motoru OHLCV verisini kronolojik olarak bar-bar ilerletir ve stratejiye yalnız o ana kadar görünür olan pencereyi verir. Sinyal `t` kapanışında oluşur, giriş varsayılan olarak `t+1 OPEN` fiyatındadır. Entry gap limiti aşılırsa işlem reddedilir. Aynı barda stop ve hedef görülürse muhafazakâr `STOP_FIRST` uygulanır; stop altı açılış gerçek open fiyatından fill edilir. Portfolio pozisyon/risk limitleri, commission ve slippage uygulanır. Replay run, immutable config hash, audit kayıtları, trade ve equity curve PostgreSQL'de kalıcıdır.
+
+Endpointler: `POST /replay`, `GET /replay/{run_id}`, `/trades`, `/performance`, `/equity`. API yalnız loopback binding'ini korur.
+
 ## Provider ekleme
 
 Piyasa verisi için `MarketDataProvider`, KAP için `KapProvider`, takas için `TakasProvider` sınıfını uygulayın ve dependency injection ile servise verin. HTML scraping production sağlayıcısı değildir. Licensed provider ağ hatalarında sınırlı retry/backoff uygulamalı, sonra `PROVIDER_DOWN` dönmelidir. İkinci piyasa kaynağı fiyat toleransı aşınca `DATA_CONFLICT` üretmelidir. KAP ham metni değişmeden saklanır; takas yoksa `TAKAS_DATA_UNAVAILABLE` normal durumdur.
