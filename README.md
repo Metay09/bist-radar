@@ -12,6 +12,10 @@ Both are localhost-only. See [dashboard](docs/dashboard.md), [Telegram](docs/tel
 [autonomous operations](docs/operations.md). Yahoo/yfinance data is unofficial, unverified,
 research-only data and is not suitable for production/live-trading validation.
 
+Cloudflare publication readiness and the mandatory Access boundary are documented in
+[Cloudflare Tunnel publication](docs/cloudflare-access.md). Public publication remains disabled
+until the remotely managed tunnel and Access policy are configured with authorized credentials.
+
 BIST hisseleri için açıklanabilir karar-destek, tarama, backtest ve paper-trading sistemi. Gerçek emir göndermez; `TRADING_MODE=live` başlangıçta reddedilir.
 
 ## Mimari ve güvenlik
