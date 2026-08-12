@@ -1,0 +1,43 @@
+name: bist-radar
+services:
+  bist-radar-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bist_radar}
+      POSTGRES_USER: ${POSTGRES_USER:-bist_radar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - bist-radar-postgres-data:/var/lib/postgresql/data
+    networks: [bist-radar-network]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  bist-radar-api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bist_radar}:${POSTGRES_PASSWORD}@bist-radar-db:5432/${POSTGRES_DB:-bist_radar}
+      TRADING_MODE: paper
+    ports: ["127.0.0.1:${API_PORT:-8765}:8765"]
+    depends_on:
+      bist-radar-db: {condition: service_healthy}
+    networks: [bist-radar-network]
+    restart: unless-stopped
+  bist-radar-worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bist_radar}:${POSTGRES_PASSWORD}@bist-radar-db:5432/${POSTGRES_DB:-bist_radar}
+      TRADING_MODE: paper
+    depends_on:
+      bist-radar-db: {condition: service_healthy}
+    networks: [bist-radar-network]
+    restart: unless-stopped
+networks:
+  bist-radar-network:
+    name: bist-radar-network
+volumes:
+  bist-radar-postgres-data:
+    name: bist-radar-postgres-data
