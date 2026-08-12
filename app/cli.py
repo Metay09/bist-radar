@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from app.backtest.replay_models import Timeframe
 from app.backtest.repository import ReplayRepository
 from app.backtest.research_replay import research_scan, run_research_replay
 from app.core.config import get_settings
@@ -12,6 +13,7 @@ from app.data.readiness import assert_environment_compatible
 from app.data.research import ResearchCache, completed_daily_bars, load_universe
 from app.data.research_repository import ResearchRepository
 from app.data.yfinance_provider import YFinanceResearchProvider
+from app.intraday.service import IntradayResearchService
 
 
 def download_research(start: date, end: date) -> tuple[list[CanonicalBar], dict[str, object]]:
@@ -84,13 +86,58 @@ def download_research(start: date, end: date) -> tuple[list[CanonicalBar], dict[
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bist-radar research")
     parser.add_argument(
-        "command", choices=("research-download", "research-scan", "research-replay")
+        "command",
+        choices=(
+            "research-download",
+            "research-scan",
+            "research-replay",
+            "intraday-download",
+            "intraday-scan",
+        ),
     )
     parser.add_argument("--years", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dataset-id")
+    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--timeframe", choices=("5m", "15m", "30m", "60m"), default="15m")
     args = parser.parse_args()
     repository = ResearchRepository()
+    if args.command == "intraday-download":
+        settings = get_settings()
+        universe = load_universe(Path("config/universes/bist100.csv"))
+        symbols = [member.symbol for member in universe.members if member.active]
+        end = date.today() + timedelta(days=1)
+        start = end - timedelta(days=args.days)
+        timeframe = Timeframe(args.timeframe)
+        provider = YFinanceResearchProvider(
+            price_mode=settings.research_price_mode, attempts=settings.research_download_attempts
+        )
+        results, failures = provider.download_many_intraday(
+            symbols, start, end, timeframe, settings.research_batch_size
+        )
+        bars = [bar for result in results.values() for bar in result.bars]
+        report: dict[str, object] = {
+            "provider": provider.metadata.provider_id,
+            "flags": ["RESEARCH_ONLY", "UNVERIFIED_SOURCE", "INTRADAY_RANGE_LIMITED"],
+            "timeframe": timeframe.value,
+            "requested_symbols": len(symbols),
+            "found_symbols": len(results),
+            "missing_symbols": failures,
+            "bars": len(bars),
+            "actual_start": min((bar.timestamp for bar in bars), default=None),
+            "actual_end": max((bar.timestamp for bar in bars), default=None),
+            "quality": sum(result.quality.bars_valid for result in results.values())
+            / max(1, sum(result.quality.bars_received for result in results.values()))
+            * 100,
+        }
+        if not args.dry_run and bars:
+            dataset_id, inserted, duplicates = repository.import_dataset(bars, report, report)
+            report |= {"dataset_id": dataset_id, "inserted": inserted, "duplicates": duplicates}
+        print(json.dumps(report, default=str, sort_keys=True))
+        return
+    if args.command == "intraday-scan":
+        print(json.dumps(IntradayResearchService().run(), default=str, sort_keys=True))
+        return
     if args.command == "research-download":
         end = date.today() + timedelta(days=1)
         start = end - timedelta(days=365 * args.years)

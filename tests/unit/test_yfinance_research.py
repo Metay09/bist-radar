@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from app.backtest.replay_models import Timeframe
 from app.data.canonical import DataMode, QualityFlag
 from app.data.readiness import assert_environment_compatible
 from app.data.research import ResearchCache, liquidity_rejection, load_universe
@@ -311,3 +312,56 @@ def test_universe_hash_and_liquidity_filters(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="duplicate"):
         load_universe(invalid)
     assert liquidity_rejection(pd.DataFrame({"x": [1]})) == "REJECTED_LOW_LIQUIDITY"
+
+
+def test_intraday_download_uses_explicit_supported_interval() -> None:
+    calls: list[dict[str, object]] = []
+
+    def downloader(**kwargs: object) -> pd.DataFrame:
+        calls.append(kwargs)
+        data = vendor_frame(60)
+        data.index = pd.date_range("2026-01-01 07:00", periods=60, freq="15min")
+        return data
+
+    provider = YFinanceResearchProvider(downloader=downloader, attempts=1)
+    result = provider.download_intraday("ASELS", date(2026, 1, 1), date(2026, 1, 5), Timeframe.M15)
+    assert calls[0]["interval"] == "15m"
+    assert all(bar.timeframe == Timeframe.M15 for bar in result.bars)
+    with pytest.raises(ValueError, match="unsupported"):
+        provider.download_intraday("ASELS", date(2026, 1, 1), date(2026, 1, 5), Timeframe.D1)
+
+
+def test_multi_symbol_intraday_batch_and_fallback() -> None:
+    base = vendor_frame(60)
+    base.index = pd.date_range("2026-01-01 07:00", periods=60, freq="15min")
+    columns = pd.MultiIndex.from_product([base.columns, ["ASELS.IS", "THYAO.IS"]])
+    batch = pd.DataFrame(
+        [[value for value in row for _ in range(2)] for row in base.to_numpy()],
+        index=base.index,
+        columns=columns,
+    )
+    provider = YFinanceResearchProvider(lambda **_: batch, attempts=1)
+    results, failures = provider.download_many_intraday(
+        ["THYAO", "ASELS", "ASELS"],
+        date(2026, 1, 1),
+        date(2026, 1, 5),
+        Timeframe.M15,
+        batch_size=2,
+    )
+    assert sorted(results) == ["ASELS", "THYAO"] and not failures
+
+    def fallback(**kwargs: object) -> pd.DataFrame:
+        if " " in str(kwargs["tickers"]):
+            raise TimeoutError
+        return base
+
+    results, failures = YFinanceResearchProvider(fallback, attempts=1).download_many_intraday(
+        ["ASELS", "THYAO"],
+        date(2026, 1, 1),
+        date(2026, 1, 5),
+        Timeframe.M15,
+        batch_size=2,
+    )
+    assert len(results) == 2 and not failures
+    with pytest.raises(ValueError, match="unsupported"):
+        provider.download_many_intraday(["ASELS"], date(2026, 1, 1), date(2026, 1, 5), Timeframe.D1)

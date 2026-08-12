@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     min_price: float = 0
     bist_daily_close_time: str = "18:10"
     research_close_delay_minutes: int = 30
+    intraday_scan_minutes: int = 15
+    intraday_signal_cooldown_minutes: int = 60
+    intraday_signal_upgrade_points: int = 5
+    intraday_stale_minutes: int = 45
+    ml_mode: Literal["shadow"] = "shadow"
+    allow_ml_to_change_radar: bool = False
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)
@@ -58,6 +64,8 @@ class Settings(BaseSettings):
             raise ValueError("LIVE TRADING IS DISABLED: TRADING_MODE must be paper")
         if self.data_environment == "production" and not self.require_verified_calendar:
             raise ValueError("production requires verified calendar")
+        if self.ml_mode != "shadow" or self.allow_ml_to_change_radar:
+            raise ValueError("ML is diagnostic-only: shadow mode is mandatory")
         return self
 
 

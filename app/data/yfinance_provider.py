@@ -48,7 +48,11 @@ class YFinanceResearchProvider:
         verified=False,
     )
     capabilities = ProviderCapabilities(
-        historical_bars=True, indices=True, corporate_actions=True, delayed=True
+        historical_bars=True,
+        intraday_bars=True,
+        indices=True,
+        corporate_actions=True,
+        delayed=True,
     )
     mandatory_flags = (
         QualityFlag.RESEARCH_ONLY,
@@ -99,7 +103,7 @@ class YFinanceResearchProvider:
             raise ResearchProviderError("yfinance dependency unavailable") from exc
         return yf.download(**kwargs)
 
-    def _fetch(self, vendor: str, start: date, end: date) -> pd.DataFrame:
+    def _fetch(self, vendor: str, start: date, end: date, interval: str = "1d") -> pd.DataFrame:
         last_error: Exception | None = None
         for attempt in range(self.attempts):
             try:
@@ -107,7 +111,7 @@ class YFinanceResearchProvider:
                     tickers=vendor,
                     start=start.isoformat(),
                     end=end.isoformat(),
-                    interval="1d",
+                    interval=interval,
                     auto_adjust=self.price_mode == "adjusted",
                     actions=True,
                     progress=False,
@@ -155,8 +159,70 @@ class YFinanceResearchProvider:
                     pass
         return self._convert(symbol, start, end, frame)
 
+    def download_intraday(
+        self, symbol: str, start: date, end: date, timeframe: Timeframe
+    ) -> ResearchDownload:
+        intervals = {
+            Timeframe.M5: "5m",
+            Timeframe.M15: "15m",
+            Timeframe.M30: "30m",
+            Timeframe.M60: "60m",
+        }
+        if timeframe not in intervals:
+            raise ValueError("unsupported intraday timeframe")
+        vendor = self.vendor_symbol(symbol)
+        frame = self._fetch(vendor, start, end, intervals[timeframe])
+        if frame.empty:
+            raise SymbolDataUnavailable("SYMBOL_DATA_UNAVAILABLE")
+        return self._convert(symbol, start, end, frame, timeframe=timeframe)
+
+    def download_many_intraday(
+        self,
+        symbols: list[str],
+        start: date,
+        end: date,
+        timeframe: Timeframe = Timeframe.M15,
+        batch_size: int = 25,
+    ) -> tuple[dict[str, ResearchDownload], dict[str, str]]:
+        intervals = {
+            Timeframe.M5: "5m",
+            Timeframe.M15: "15m",
+            Timeframe.M30: "30m",
+            Timeframe.M60: "60m",
+        }
+        if timeframe not in intervals or batch_size < 1:
+            raise ValueError("unsupported timeframe or batch size")
+        results: dict[str, ResearchDownload] = {}
+        failures: dict[str, str] = {}
+        ordered = sorted(dict.fromkeys(symbols))
+        for offset in range(0, len(ordered), batch_size):
+            batch = ordered[offset : offset + batch_size]
+            try:
+                vendors = " ".join(self.vendor_symbol(symbol) for symbol in batch)
+                raw = self._fetch(vendors, start, end, intervals[timeframe])
+                for symbol in batch:
+                    try:
+                        individual = self._flatten(raw, self.vendor_symbol(symbol))
+                        results[symbol] = self._convert(
+                            symbol, start, end, individual, timeframe=timeframe
+                        )
+                    except ResearchProviderError as exc:
+                        failures[symbol] = str(exc)
+            except ResearchProviderError:
+                for symbol in batch:
+                    try:
+                        results[symbol] = self.download_intraday(symbol, start, end, timeframe)
+                    except ResearchProviderError as exc:
+                        failures[symbol] = str(exc)
+        return results, failures
+
     def _convert(
-        self, symbol: str, start: date, end: date, frame: pd.DataFrame
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+        frame: pd.DataFrame,
+        timeframe: Timeframe = Timeframe.D1,
     ) -> ResearchDownload:
         vendor = self.vendor_symbol(symbol)
         frame = self._flatten(frame, vendor)
@@ -183,7 +249,7 @@ class YFinanceResearchProvider:
                 bar = CanonicalBar(
                     symbol=symbol,
                     timestamp=timestamp.to_pydatetime(),
-                    timeframe=Timeframe.D1,
+                    timeframe=timeframe,
                     open=values[0],
                     high=values[1],
                     low=values[2],

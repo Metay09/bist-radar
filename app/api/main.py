@@ -21,6 +21,8 @@ from app.data.research_repository import ResearchRepository
 from app.data.vendor_mock import MockVendorA, MockVendorB
 from app.data.yfinance_provider import YFinanceResearchProvider
 from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
+from app.intraday.outcomes import accuracy_buckets
+from app.intraday.repository import IntradayRepository
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
@@ -41,6 +43,7 @@ ledger = PaperLedger()
 paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
 research_repository = ResearchRepository()
+intraday_repository = IntradayRepository()
 
 
 class ReplayRequest(BaseModel):
@@ -277,6 +280,75 @@ def latest_research_replay() -> dict[str, object]:
     if report is None:
         raise HTTPException(404, "research replay not available")
     return report
+
+
+@app.get("/intraday/status")
+def intraday_status() -> dict[str, object]:
+    latest = research_repository.latest_report("intraday_scan")
+    return {
+        "strategy_id": "radar-intraday-v1",
+        "provider": "yfinance-research",
+        "timeframes": ["5m", "15m", "30m", "60m"],
+        "cadence_minutes": settings.intraday_scan_minutes,
+        "research_only": True,
+        "latest_scan": latest,
+    }
+
+
+@app.get("/intraday/scan")
+def intraday_scan() -> dict[str, object]:
+    report = research_repository.latest_report("intraday_scan")
+    if report is None:
+        return {"strategy_id": "radar-intraday-v1", "candidates": [], "status": "NO_SCAN"}
+    return report
+
+
+@app.get("/intraday/scan/{symbol}")
+def intraday_scan_symbol(symbol: str) -> dict[str, object]:
+    candidates = intraday_scan().get("candidates", [])
+    if not isinstance(candidates, list):
+        raise HTTPException(500, "invalid intraday report")
+    match = next(
+        (
+            row
+            for row in candidates
+            if isinstance(row, dict) and row.get("symbol") == symbol.upper()
+        ),
+        None,
+    )
+    if match is None:
+        raise HTTPException(404, "intraday symbol not available")
+    return {str(key): value for key, value in match.items()}
+
+
+@app.get("/signals/outcomes")
+def signal_outcomes() -> list[dict[str, object]]:
+    return intraday_repository.outcomes()
+
+
+@app.get("/analytics/signal-accuracy")
+def signal_accuracy(group: str = "score") -> list[dict[str, object]]:
+    return accuracy_buckets(intraday_repository.outcomes(), group)
+
+
+@app.get("/ml/status")
+def ml_status() -> dict[str, object]:
+    return intraday_repository.status()
+
+
+@app.get("/ml/models")
+def ml_models() -> list[dict[str, object]]:
+    return intraday_repository.models()
+
+
+@app.get("/ml/predictions")
+def ml_predictions() -> list[dict[str, object]]:
+    return intraday_repository.predictions()
+
+
+@app.get("/ml/evaluation")
+def ml_evaluation() -> list[dict[str, object]]:
+    return intraday_repository.evaluations()
 
 
 @app.get("/data/quality")

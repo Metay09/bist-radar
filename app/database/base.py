@@ -183,6 +183,60 @@ class ResearchReportRow(Base):
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class MlFeatureSnapshotRow(Base):
+    __tablename__ = "ml_feature_snapshots"
+    signal_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8))
+    signal_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    lifecycle: Mapped[str] = mapped_column(String(24), default="OUTCOME_PENDING")
+    feature_schema_version: Mapped[str] = mapped_column(String(30))
+    features: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class MlOutcomeRow(Base):
+    __tablename__ = "ml_outcomes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(120), index=True)
+    horizon: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(24))
+    outcome: Mapped[dict[str, object]] = mapped_column(JSON)
+    __table_args__ = (UniqueConstraint("signal_id", "horizon", name="uq_ml_outcome_horizon"),)
+
+
+class MlDatasetRow(Base):
+    __tablename__ = "ml_datasets"
+    dataset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON)
+
+
+class MlModelRow(Base):
+    __tablename__ = "ml_models"
+    model_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    model_type: Mapped[str] = mapped_column(String(40))
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON)
+
+
+class MlPredictionRow(Base):
+    __tablename__ = "ml_predictions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(120), index=True)
+    model_id: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    predictions: Mapped[dict[str, object]] = mapped_column(JSON)
+    __table_args__ = (UniqueConstraint("signal_id", "model_id", name="uq_ml_prediction"),)
+
+
+class MlEvaluationRow(Base):
+    __tablename__ = "ml_evaluations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
 def engine() -> Engine:
     return create_engine(get_settings().database_url)
 

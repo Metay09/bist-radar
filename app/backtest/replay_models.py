@@ -7,6 +7,7 @@ from enum import StrEnum
 class Timeframe(StrEnum):
     D1 = "1d"
     M60 = "60m"
+    M30 = "30m"
     M15 = "15m"
     M5 = "5m"
 

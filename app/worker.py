@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from app.api.service import service
 from app.core.logging import configure_logging
 from app.database.base import EventRow, SessionLocal
+from app.intraday.service import safe_intraday_cycle
 
 
 def run() -> None:
@@ -22,6 +23,7 @@ def run() -> None:
                 )
             )
         log.info("market_scan_finished count=%d", len(results))
+        safe_intraday_cycle()
         time.sleep(300)
 
 
