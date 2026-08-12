@@ -12,3 +12,21 @@ and the service worker never caches API financial responses.
 Desktop uses a compact side navigation and mobile uses safe-area-aware bottom navigation. The UI
 contains keyboard focus states, semantic status colors, loading/error/empty states and Turkish locale
 formatting. Install via the browser's PWA action when served from localhost.
+
+## İşlem planı
+
+Güçlü adaylar ve hisse detayı tek bir “hemen al” fiyatı vermez. Backend mevcut ATR, son yapısal dip,
+breakout mesafesi ve risk motoruyla referans fiyat, giriş bölgesi, breakout seviyesi, stop, üç hedef ve
+risk/getiri üretir. `GIRIS_BEKLENIYOR`, `GIRIS_BOLGESINDE`, `BREAKOUT_ONAYI`, `KACMIS_KOVALAMA` ve
+`GECERSIZ` durumları planın nasıl okunacağını açıklar. Pozisyon boyutu varsayılan paper sermayesi ve
+işlem başına maksimum risk üzerinden advisory olarak gösterilir; emir açmaz.
+
+Eski veri planı gizlice güncelmiş gibi sunulmaz. Piyasa kapalı veya veri eskiyse plan son tamamlanmış
+araştırma barına ait olduğunu belirtir. Stop kırmızı, hedefler yeşil ve nötr seviyeler mavi/gri gösterilir.
+
+## Mobil kullanım ve rehber
+
+Telefon görünümünde sidebar kapanır; Radar, Sinyaller, Portföy, Analiz ve Sistem için safe-area uyumlu
+ikonlu bottom navigation açılır. Uzun sinyal tabloları yatay taşma yerine özet kartlara dönüşür. İlk
+açılışta Türkçe on adımlı ürün turu gösterilir; tur atlanabilir, tercih yalnız tarayıcı local storage'da
+saklanır ve “Yardım / Rehber” düğmesinden yeniden başlatılabilir.

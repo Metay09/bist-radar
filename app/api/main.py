@@ -15,9 +15,11 @@ from app.api.dashboard import (
 )
 from app.api.dashboard import (
     dashboard_summary,
+    dashboard_trade_plans,
     signal_history,
     symbol_detail,
     system_overview,
+    trade_plan,
 )
 from app.api.dashboard import (
     performance_summary as dashboard_performance,
@@ -405,6 +407,16 @@ def dashboard_summary_endpoint() -> dict[str, object]:
 @app.get("/dashboard/candidates")
 def dashboard_candidates_endpoint() -> list[dict[str, object]]:
     return dashboard_candidates()
+
+
+@app.get("/dashboard/trade-plans")
+def dashboard_trade_plans_endpoint() -> list[dict[str, object]]:
+    return dashboard_trade_plans()
+
+
+@app.get("/symbols/{symbol}/trade-plan")
+def symbol_trade_plan_endpoint(symbol: str) -> dict[str, object]:
+    return trade_plan(symbol)
 
 
 @app.get("/symbols/{symbol}/detail")

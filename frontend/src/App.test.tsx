@@ -1,9 +1,49 @@
-import {cleanup,render,screen,waitFor} from '@testing-library/react';import {MemoryRouter} from 'react-router-dom';import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';import App from './App';
-const summary={provider:'Yahoo Finance via yfinance',provider_health:'RESEARCH_ONLY',paper_mode:true,research_only:true,market_open:true,data_timestamp:'2026-08-13T10:00:00Z',freshness:{state:'STALE',age_minutes:90,label:'Veri eski: 1,5 saat'},counts:{VERY_STRONG_CANDIDATE:1,STRONG_CANDIDATE:0,CANDIDATE:0,WATCH:0,PENDING_OUTCOMES:19},last_scan:'2026-08-13T10:00:00Z'};
-const candidate={symbol:'ASELS',radar_score:91,classification:'VERY_STRONG_CANDIDATE',price:200,rvol:2.5,early_momentum_score:88,timestamp:'2026-08-13T10:00:00Z',data_quality:100,market_regime:'NEUTRAL',daily_trend:'UPTREND',breakout_distance:-.2,disposition:'SIGNAL_UPGRADED'};
-beforeEach(()=>{vi.stubGlobal('fetch',vi.fn((url:string)=>Promise.resolve({
-  ok:true,
-  json:()=>Promise.resolve(url.includes('performance')?{realized_pnl:0,open_positions:0,closed_trades:0,mtm_equity:null}:url.includes('summary')?summary:url.includes('candidates')?[candidate]:url.includes('/ml/status')?{observations:19,fully_labeled:0}:url.includes('system/overview')?{database:'HEALTHY',worker_jobs:[]}:[])
-}))) });
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {MemoryRouter} from 'react-router-dom';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+import App from './App';
+
+const stamp='2026-08-13T10:00:00Z';
+const freshness={state:'STALE',age_minutes:90,label:'Veri eski: 1,5 saat'};
+const summary={provider:'Yahoo Finance via yfinance',provider_health:'RESEARCH_ONLY',paper_mode:true,research_only:true,market_open:true,data_timestamp:stamp,freshness,counts:{VERY_STRONG_CANDIDATE:1,PENDING_OUTCOMES:19},last_scan:stamp};
+const candidate={symbol:'ASELS',radar_score:91,classification:'VERY_STRONG_CANDIDATE',price:200,rvol:2.5,early_momentum_score:88,timestamp:stamp,data_quality:100,market_regime:'NEUTRAL',daily_trend:'UPTREND',breakout_distance:-.2,disposition:'SIGNAL_UPGRADED'};
+const plan={symbol:'ASELS',timestamp:stamp,reference_price:200,entry_zone_low:198,entry_zone_high:201,breakout_trigger:200,stop_price:194,stop_distance_percent:3,targets:[{price:209,return_percent:4.5},{price:215,return_percent:7.5},{price:218,return_percent:9}],risk_reward:2.5,status:'BREAKOUT_ONAYI',explanation:['RVOL yüksek','Veri eski; plan son bara dayanır.'],data_age_minutes:90,stale:true,research_only:true,position_sizing:{account_equity:100000,max_risk_percent:.75,allowed_risk_amount:750,suggested_position_value:20000,estimated_quantity:100,advisory_only:true}};
+const detail={symbol:'ASELS',candidate,bars:[{timestamp:stamp,open:198,high:202,low:197,close:200,volume:100}],progression:[],freshness,trade_plan:plan};
+
+beforeEach(()=>{localStorage.clear();vi.stubGlobal('fetch',vi.fn((url:string)=>Promise.resolve({ok:true,json:()=>Promise.resolve(url.includes('performance')?{realized_pnl:0,open_positions:0,closed_trades:0,mtm_equity:null}:url.includes('/symbols/')?detail:url.includes('trade-plans')?[plan]:url.includes('summary')?summary:url.includes('candidates')?[candidate]:url.includes('/signals/history')?[candidate]:url.includes('/ml/status')?{observations:19,fully_labeled:0}:url.includes('system/overview')?{database:'HEALTHY',worker_jobs:[]}:[])}))) });
 afterEach(()=>cleanup());
-describe('dashboard',()=>{it('renders radar, stale banner and sorted candidate',async()=>{render(<MemoryRouter><App/></MemoryRouter>);expect(await screen.findByText('Öne Çıkan Adaylar')).toBeInTheDocument();expect(screen.getByText('Veri eski: 1,5 saat')).toBeInTheDocument();expect(screen.getByText('ASELS')).toBeInTheDocument()});it('renders paper portfolio empty-safe',async()=>{render(<MemoryRouter initialEntries={['/portfolio']}><App/></MemoryRouter>);expect(await screen.findByText('Paper Portföy')).toBeInTheDocument();expect(await screen.findByText('Veri yok')).toBeInTheDocument()});it('shows shadow insufficient data warning',async()=>{render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);expect(await screen.findByText(/Henüz yeterli etiketlenmiş veri yok/)).toBeInTheDocument();expect(screen.getByText(/Radar kararını etkilemez/)).toBeInTheDocument()});it('handles provider failure',async()=>{vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);await waitFor(()=>expect(screen.getByText(/Veri servisine ulaşılamıyor/)).toBeInTheDocument())})});
+
+describe('dashboard UX',()=>{
+  it('renders mobile bottom nav and desktop sidebar landmarks',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter><App/></MemoryRouter>);
+    expect(await screen.findByText('Öne Çıkan Adaylar')).toBeInTheDocument();
+    expect(screen.getByLabelText('Mobil ana navigasyon')).toBeInTheDocument();
+    expect(document.querySelector('.desktop-sidebar')).toBeInTheDocument();
+    expect(document.querySelector('.mobile-signals')).toBeInTheDocument();
+  });
+  it('opens, dismisses, persists and reopens guided tour',()=>{
+    render(<MemoryRouter><App/></MemoryRouter>);expect(screen.getByText('BIST Radar’a hoş geldiniz')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Atla'));expect(localStorage.getItem('bist-radar-tour-seen')).toBe('1');
+    fireEvent.click(screen.getByLabelText('Rehberi aç'));expect(screen.getByText('BIST Radar’a hoş geldiniz')).toBeInTheDocument();
+  });
+  it('renders trade plan warning, sizing, chart and tabs',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/symbol/ASELS']}><App/></MemoryRouter>);
+    expect(await screen.findByRole('heading',{name:/İşlem Planı/})).toBeInTheDocument();
+    expect(screen.getByText(/Veri eski: 90 dk/)).toBeInTheDocument();expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
+    expect(screen.getByRole('tab',{name:'Sinyal Geçmişi'})).toBeInTheDocument();fireEvent.click(screen.getByRole('tab',{name:'Grafik'}));
+    expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();
+  });
+  it('renders signal mobile cards and contextual help',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/signals']}><App/></MemoryRouter>);
+    expect(await screen.findByRole('heading',{name:'Sinyaller'})).toBeInTheDocument();expect(document.querySelector('.signal-card')).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/RVOL:/).length).toBeGreaterThan(0);
+  });
+  it('shows shadow insufficient data warning',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);
+    expect(await screen.findByText(/Henüz yeterli etiketlenmiş veri yok/)).toBeInTheDocument();expect(screen.getByText(/Radar kararını etkilemez/)).toBeInTheDocument();
+  });
+  it('handles provider failure',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);
+    await waitFor(()=>expect(screen.getByText(/Veri servisine ulaşılamıyor/)).toBeInTheDocument());
+  });
+});

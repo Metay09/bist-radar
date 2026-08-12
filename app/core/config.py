@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     max_risk_per_trade_percent: float = 0.75
     min_risk_reward: float = 2.0
     max_position_percent: float = 20
+    paper_default_account_equity: float = 100000
     commission_bps: float = 10
     slippage_bps: float = 5
     execution_model: Literal["NEXT_BAR_OPEN"] = "NEXT_BAR_OPEN"

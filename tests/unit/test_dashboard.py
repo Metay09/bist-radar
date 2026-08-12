@@ -47,6 +47,10 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
         "market_regime": "NEUTRAL",
         "daily_trend": "UPTREND",
         "breakout_distance": 0,
+        "atr": 2,
+        "vwap_distance": 1,
+        "ema9_distance": 1,
+        "ema20_distance": 1,
         "disposition": "SIGNAL_CREATED",
     }
     with factory.begin() as session:
@@ -106,6 +110,10 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
     assert dashboard.candidates()[0]["symbol"] == "ASELS"
     detail = dashboard.symbol_detail("ASELS", 20)
     assert detail and len(detail["bars"]) == 20 and detail["progression"]
+    assert detail["trade_plan"]["status"] == "BREAKOUT_ONAYI"
+    assert len(detail["trade_plan"]["targets"]) == 3
+    assert dashboard.dashboard_trade_plans()[0]["symbol"] == "ASELS"
+    assert dashboard.trade_plan("NONE")["status"] == "GECERSIZ"
     assert dashboard.symbol_detail("NONE") is None
     assert dashboard.signal_history(symbol="ASELS")[0]["lifecycle"] == "OUTCOME_PENDING"
     assert dashboard.performance_summary()["open_positions"] == 1

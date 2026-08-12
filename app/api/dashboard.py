@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, func, select
 
+from app.core.config import get_settings
 from app.data.research_repository import ResearchRepository
 from app.database.base import (
     MarketBarRow,
@@ -15,6 +16,7 @@ from app.database.base import (
     WorkerStateRow,
 )
 from app.intraday.repository import IntradayRepository
+from app.risk.trade_plan_view import build_research_trade_plan
 
 
 def market_open(now: datetime | None = None) -> bool:
@@ -81,6 +83,38 @@ def candidates() -> list[dict[str, object]]:
     )
 
 
+def trade_plan(symbol: str) -> dict[str, object]:
+    canonical = symbol.upper()
+    candidate = next((row for row in candidates() if row.get("symbol") == canonical), None)
+    if candidate is None:
+        return {
+            "symbol": canonical,
+            "status": "GECERSIZ",
+            "research_only": True,
+            "explanation": ["Henüz yeterli aday ve risk bağlamı yok."],
+        }
+    with SessionLocal() as session:
+        lows = session.scalars(
+            select(MarketBarRow.low)
+            .where(MarketBarRow.symbol == canonical, MarketBarRow.timeframe == "15m")
+            .order_by(desc(MarketBarRow.timestamp))
+            .limit(10)
+        ).all()
+    settings = get_settings()
+    return build_research_trade_plan(
+        candidate,
+        list(reversed(lows)),
+        account_equity=Decimal(str(settings.paper_default_account_equity)),
+        risk_percent=Decimal(str(settings.max_risk_per_trade_percent)),
+        max_position_percent=Decimal(str(settings.max_position_percent)),
+        stale_minutes=settings.intraday_stale_minutes,
+    )
+
+
+def dashboard_trade_plans() -> list[dict[str, object]]:
+    return [trade_plan(str(row["symbol"])) for row in candidates()]
+
+
 def symbol_detail(symbol: str, limit: int = 160) -> dict[str, object] | None:
     canonical = symbol.upper()
     candidate = next((row for row in candidates() if row.get("symbol") == canonical), None)
@@ -115,6 +149,7 @@ def symbol_detail(symbol: str, limit: int = 160) -> dict[str, object] | None:
         ],
         "progression": [dict(row.features) | {"lifecycle": row.lifecycle} for row in progression],
         "freshness": freshness(bars[0].timestamp if bars else None),
+        "trade_plan": trade_plan(canonical),
     }
 
 
