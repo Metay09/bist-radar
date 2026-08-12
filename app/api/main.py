@@ -17,7 +17,8 @@ from app.backtest.repository import ReplayRepository
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.data.historical import CsvHistoricalProvider, SymbolMetadata
-from app.database.base import EventRow, SessionLocal
+from app.data.vendor_mock import MockVendorA, MockVendorB
+from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
@@ -198,3 +199,65 @@ def replay_performance_endpoint(run_id: str) -> dict[str, object]:
 @app.get("/replay/{run_id}/equity")
 def replay_equity(run_id: str) -> list[dict[str, object]]:
     return replay_repository.equity(run_id)
+
+
+def provider_payload(provider: Any) -> dict[str, object]:
+    return {
+        "provider_id": provider.metadata.provider_id,
+        "provider_name": provider.metadata.provider_name,
+        "data_mode": provider.metadata.data_mode.value,
+        "timezone": provider.metadata.timezone,
+        "verified": provider.metadata.verified,
+        "capabilities": vars(provider.capabilities),
+    }
+
+
+@app.get("/providers")
+def providers() -> list[dict[str, object]]:
+    return [provider_payload(p) for p in (MockVendorA(), MockVendorB())]
+
+
+@app.get("/providers/health")
+def providers_health() -> list[dict[str, object]]:
+    return [
+        {
+            "provider_id": p.metadata.provider_id,
+            "health": "HEALTHY",
+            "data_mode": p.metadata.data_mode.value,
+        }
+        for p in (MockVendorA(), MockVendorB())
+    ]
+
+
+@app.get("/data/quality")
+def data_quality() -> list[dict[str, object]]:
+    return [
+        {
+            "provider_id": "mock-a",
+            "bars_received": 0,
+            "bars_valid": 0,
+            "invalid_bars": 0,
+            "duplicate_bars": 0,
+            "revised_bars": 0,
+            "missing_bars": "unknown",
+            "quality_percent": 0,
+            "p50_latency_ms": 0,
+            "p95_latency_ms": 0,
+            "p99_latency_ms": 0,
+        }
+    ]
+
+
+@app.get("/datasets")
+def datasets() -> list[dict[str, object]]:
+    with SessionLocal() as session:
+        return [row.manifest for row in session.scalars(select(HistoricalDatasetRow)).all()]
+
+
+@app.get("/datasets/{dataset_id}")
+def dataset(dataset_id: str) -> dict[str, object]:
+    with SessionLocal() as session:
+        row = session.get(HistoricalDatasetRow, dataset_id)
+    if row is None:
+        raise HTTPException(404, "dataset not found")
+    return row.manifest

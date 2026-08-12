@@ -113,6 +113,51 @@ class ReplayEquityRow(Base):
     drawdown: Mapped[Decimal] = mapped_column(Numeric(20, 8))
 
 
+class ProviderRow(Base):
+    __tablename__ = "providers"
+    provider_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    data_mode: Mapped[str] = mapped_column(String(20))
+    health: Mapped[str] = mapped_column(String(20))
+    capabilities: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class HistoricalDatasetRow(Base):
+    __tablename__ = "historical_datasets"
+    dataset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(40), index=True)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSON)
+    dataset_hash: Mapped[str] = mapped_column(String(64), index=True)
+
+
+class DataQualityRow(Base):
+    __tablename__ = "data_quality_metrics"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(40), index=True)
+    day: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class DataRevisionRow(Base):
+    __tablename__ = "data_revisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(40), index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    old_value: Mapped[dict[str, object]] = mapped_column(JSON)
+    new_value: Mapped[dict[str, object]] = mapped_column(JSON)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class QuarantinedDataRow(Base):
+    __tablename__ = "quarantined_market_data"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(40), index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+    errors: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
 def engine() -> Engine:
     return create_engine(get_settings().database_url)
 

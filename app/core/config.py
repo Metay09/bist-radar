@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     max_open_positions: int = 5
     max_total_open_risk_percent: float = 3
     reject_possible_corporate_action: bool = True
+    data_environment: Literal["fixture", "research", "production"] = "fixture"
+    require_verified_calendar: bool = True
+    raw_payload_archive_enabled: bool = False
+    raw_payload_retention_days: int = 7
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)
@@ -40,6 +44,8 @@ class Settings(BaseSettings):
     def reject_live(self) -> "Settings":
         if self.trading_mode != "paper":
             raise ValueError("LIVE TRADING IS DISABLED: TRADING_MODE must be paper")
+        if self.data_environment == "production" and not self.require_verified_calendar:
+            raise ValueError("production requires verified calendar")
         return self
 
 

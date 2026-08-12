@@ -29,3 +29,5 @@ Radar V1 weights are trend 15, momentum 15, RVOL 20, breakout 15, relative stren
 Backtests use only completed bars. A signal at close t executes at open t+1. Parameter train/validation/out-of-sample boundaries can be layered over the strategy interface; optimization is intentionally absent in V1. Historical constituent membership is required to control survivorship bias.
 
 Historical replay injects a `ReplayClock`, historical provider and signal strategy. The execution state machine rejects invalid transitions. Persistent run checkpoints contain `run_id`, last timestamp, status, immutable config snapshot/hash; trade idempotency is keyed by strategy/symbol/signal time. Intrabar ordering is unknowable from OHLC, therefore the documented default is conservative `STOP_FIRST`.
+
+Production data path: Provider → Raw Adapter → Schema Validation → Exact Symbol Mapping → UTC Timestamp Normalization → Canonical Decimal Bar → Quality Validation → Deduplication/Revision Audit → Persistence → Analysis. Invalid data is quarantined. A canonical identity is provider + symbol + timeframe + timestamp; changed values become auditable revisions, never silent overwrites.
