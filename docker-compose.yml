@@ -52,6 +52,13 @@ services:
       bist-radar-migrate: {condition: service_completed_successfully}
     networks: [bist-radar-network]
     restart: unless-stopped
+  bist-radar-web:
+    build: ./frontend
+    ports: ["127.0.0.1:${WEB_PORT:-8770}:80"]
+    depends_on:
+      bist-radar-api: {condition: service_healthy}
+    networks: [bist-radar-network]
+    restart: unless-stopped
 networks:
   bist-radar-network:
     name: bist-radar-network

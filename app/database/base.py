@@ -237,6 +237,33 @@ class MlEvaluationRow(Base):
     metrics: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class NotificationEventRow(Base):
+    __tablename__ = "notification_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedup_key: Mapped[str] = mapped_column(String(180), unique=True, index=True)
+    alert_type: Mapped[str] = mapped_column(String(40), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    signal_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkerStateRow(Base):
+    __tablename__ = "worker_state"
+    job_name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_processed_bar: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="UNKNOWN")
+    detail: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
 def engine() -> Engine:
     return create_engine(get_settings().database_url)
 

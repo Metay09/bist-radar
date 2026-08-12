@@ -10,6 +10,18 @@ from pydantic import BaseModel
 from sqlalchemy import desc, select, text
 
 from app import LIVE_TRADING
+from app.api.dashboard import (
+    candidates as dashboard_candidates,
+)
+from app.api.dashboard import (
+    dashboard_summary,
+    signal_history,
+    symbol_detail,
+    system_overview,
+)
+from app.api.dashboard import (
+    performance_summary as dashboard_performance,
+)
 from app.api.service import service
 from app.backtest.replay import HistoricalReplayEngine
 from app.backtest.replay_models import ExecutionOrder, Timeframe
@@ -383,3 +395,36 @@ def dataset(dataset_id: str) -> dict[str, object]:
     if row is None:
         raise HTTPException(404, "dataset not found")
     return row.manifest
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary_endpoint() -> dict[str, object]:
+    return dashboard_summary()
+
+
+@app.get("/dashboard/candidates")
+def dashboard_candidates_endpoint() -> list[dict[str, object]]:
+    return dashboard_candidates()
+
+
+@app.get("/symbols/{symbol}/detail")
+def symbol_detail_endpoint(symbol: str, limit: int = 160) -> dict[str, object]:
+    result = symbol_detail(symbol, limit)
+    if result is None:
+        raise HTTPException(404, "symbol detail not found")
+    return result
+
+
+@app.get("/signals/history")
+def signal_history_endpoint(limit: int = 100, symbol: str | None = None) -> list[dict[str, object]]:
+    return signal_history(limit, symbol)
+
+
+@app.get("/performance/summary")
+def dashboard_performance_endpoint() -> dict[str, object]:
+    return dashboard_performance()
+
+
+@app.get("/system/overview")
+def system_overview_endpoint() -> dict[str, object]:
+    return system_overview()

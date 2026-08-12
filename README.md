@@ -1,5 +1,17 @@
 # BIST Radar
 
+Professional research/paper-trading decision support for BIST, including deterministic daily and
+intraday Radar, outcome intelligence, shadow learning, a Turkish mobile-first web dashboard, and
+optional Telegram alerts. It never sends a real order.
+
+Dashboard: `http://127.0.0.1:8770`
+
+API: `http://127.0.0.1:8765`
+
+Both are localhost-only. See [dashboard](docs/dashboard.md), [Telegram](docs/telegram.md), and
+[autonomous operations](docs/operations.md). Yahoo/yfinance data is unofficial, unverified,
+research-only data and is not suitable for production/live-trading validation.
+
 BIST hisseleri için açıklanabilir karar-destek, tarama, backtest ve paper-trading sistemi. Gerçek emir göndermez; `TRADING_MODE=live` başlangıçta reddedilir.
 
 ## Mimari ve güvenlik

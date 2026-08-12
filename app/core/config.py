@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)
     telegram_chat_id: str | None = Field(default=None, repr=False)
+    telegram_enabled: bool = False
+    telegram_alert_types: str = (
+        "STRONG_CANDIDATE,VERY_STRONG_CANDIDATE,SIGNAL_UPGRADED,"
+        "PAPER_TRADE_OPENED,PAPER_TRADE_CLOSED,PROVIDER_STALE,PROVIDER_RECOVERED,DAILY_SUMMARY"
+    )
+    telegram_cooldown_minutes: int = 60
+    telegram_upgrade_points: int = 5
+    max_alert_data_age_minutes: int = 45
+    web_port: int = 8770
 
     @model_validator(mode="after")
     def reject_live(self) -> "Settings":

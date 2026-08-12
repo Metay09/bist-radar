@@ -122,7 +122,7 @@ class IntradayResearchService:
         return updated
 
 
-def safe_intraday_cycle() -> None:
+def safe_intraday_cycle() -> dict[str, object] | None:
     log = logging.getLogger(__name__)
     try:
         service = IntradayResearchService()
@@ -133,6 +133,8 @@ def safe_intraday_cycle() -> None:
             len(report["candidates"]),  # type: ignore[arg-type]
             updated,
         )
+        return report
     except Exception as exc:
         # Research provider/data failure must never take down the core worker/API.
         log.warning("intraday_research_unavailable error=%s", type(exc).__name__)
+        return None
