@@ -169,5 +169,106 @@ def test_all_winning_and_all_losing_metrics() -> None:
     winning, _ = run([(10, 10, 10, 10), (10, 10, 10, 10), (10, 13, 10, 12)])
     losing, _ = run([(10, 10, 10, 10), (10, 10, 10, 10), (10, 10, 8, 9)])
     assert replay_performance(winning)["profit_factor"] == float("inf")
+    assert replay_performance(winning)["profit_factor_is_infinite"] is True
     assert replay_performance(winning)["win_rate"] == 1
+    assert replay_performance(losing)["profit_factor_is_infinite"] is False
     assert replay_performance(losing)["win_rate"] == 0
+
+
+def test_non_positive_equity_is_rejected_before_processing() -> None:
+    """Prevents nonsensical sizing and invalid equity state."""
+    engine = HistoricalReplayEngine(
+        MemoryProvider(bars([(10, 10, 10, 10)])),
+        {"TEST": SymbolMetadata("TEST")},
+        lambda symbol, visible: None,
+    )
+    for equity in (Decimal("0"), Decimal("-1")):
+        with pytest.raises(ValueError, match="initial equity"):
+            engine.run(["TEST"], Timeframe.D1, None, None, equity)
+
+
+def test_empty_history_returns_unchanged_equity() -> None:
+    """A valid empty date range is a deterministic zero-trade run."""
+    empty = bars([(10, 10, 10, 10)]).iloc[0:0]
+    engine = HistoricalReplayEngine(
+        MemoryProvider(empty), {"TEST": SymbolMetadata("TEST")}, lambda symbol, visible: None
+    )
+    result = engine.run(["TEST"], Timeframe.D1, None, None, Decimal("100"), run_id="empty")
+    assert result.run_id == "empty" and result.final_equity == Decimal("100")
+    assert result.last_processed_timestamp is None
+
+
+def rejection_strategy(score: int = 90, quality: int = 100):
+    def strategy(symbol: str, visible: pd.DataFrame) -> ExecutionOrder:
+        timestamp = visible.iloc[-1].timestamp.to_pydatetime()
+        return ExecutionOrder(
+            f"{symbol}-{len(visible)}",
+            "same-key",
+            "paper-default",
+            "radar-v1",
+            symbol,
+            timestamp,
+            Decimal("10"),
+            Decimal("9"),
+            Decimal("11"),
+            Decimal("12"),
+            score,
+            quality,
+        )
+
+    return strategy
+
+
+@pytest.mark.parametrize(
+    ("score", "quality", "expected"),
+    [(79, 100, "REJECTED_LOW_SCORE"), (90, 89, "REJECTED_LOW_DATA_QUALITY")],
+)
+def test_signal_quality_gates_are_audited(score: int, quality: int, expected: str) -> None:
+    """Rejected signals stay auditable and never reach pending entry."""
+    engine = HistoricalReplayEngine(
+        MemoryProvider(bars([(10, 10, 10, 10)])),
+        {"TEST": SymbolMetadata("TEST")},
+        rejection_strategy(score, quality),
+    )
+    result = engine.run(["TEST"], Timeframe.D1, None, None, Decimal("10000"))
+    assert result.audits == [{"signal_id": "TEST-1", "result": expected}]
+    assert not result.trades
+
+
+def test_duplicate_signal_is_audited_without_second_order() -> None:
+    """Retries with one idempotency key cannot multiply entries."""
+    engine = HistoricalReplayEngine(
+        MemoryProvider(bars([(10, 10, 10, 10), (10, 10, 10, 10)])),
+        {"TEST": SymbolMetadata("TEST")},
+        rejection_strategy(),
+    )
+    result = engine.run(["TEST"], Timeframe.D1, None, None, Decimal("10000"))
+    assert any(audit["result"] == "REJECTED_DUPLICATE" for audit in result.audits)
+    assert len(result.trades) == 1
+
+
+def test_sparse_multi_symbol_timeline_skips_missing_bar() -> None:
+    """A symbol is not evaluated using a stale bar on another symbol's timestamp."""
+    first = bars([(10, 10, 10, 10), (10, 10, 10, 10)])
+    second = first.iloc[[0]].copy()
+
+    class SparseProvider(HistoricalProvider):
+        def load(
+            self,
+            symbol: str,
+            timeframe: Timeframe,
+            start: datetime | None = None,
+            end: datetime | None = None,
+        ) -> pd.DataFrame:
+            result = (first if symbol == "TEST" else second).copy()
+            result["symbol"] = symbol
+            return result
+
+    calls: list[tuple[str, int]] = []
+    engine = HistoricalReplayEngine(
+        SparseProvider(),
+        {"TEST": SymbolMetadata("TEST"), "OTHER": SymbolMetadata("OTHER")},
+        lambda symbol, visible: calls.append((symbol, len(visible))) or None,
+    )
+    engine.run(["TEST", "OTHER"], Timeframe.D1, None, None, Decimal("100"))
+    assert calls == [("TEST", 1), ("OTHER", 1), ("TEST", 2)]

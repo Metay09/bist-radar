@@ -168,6 +168,7 @@ def replay_performance(result: ReplayResult) -> dict[str, float | int]:
     )
     return {
         **vars(base),
+        "profit_factor_is_infinite": base.profit_factor == float("inf"),
         "initial_equity": float(result.initial_equity),
         "final_equity": float(result.final_equity),
         "net_pnl": float(result.final_equity - result.initial_equity),

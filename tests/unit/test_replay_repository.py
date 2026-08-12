@@ -70,6 +70,18 @@ def test_replay_repository_persistence_resume_and_idempotency(tmp_path: Path) ->
     assert equity[0]["equity"] == "101.00000000" and len(equity) == 1
 
 
+def test_infinite_profit_factor_has_explicit_json_semantics(tmp_path: Path) -> None:
+    """Consumers distinguish all-winning infinity from an unavailable metric."""
+    repo = repository(tmp_path)
+    repo.save(result(), {})
+    stored = repo.run("run")
+    assert stored is not None
+    performance = stored["performance"]
+    assert isinstance(performance, dict)
+    assert performance["profit_factor"] is None
+    assert performance["profit_factor_is_infinite"] is True
+
+
 def test_jsonable_types() -> None:
     now = datetime.now(UTC)
     converted = jsonable(
