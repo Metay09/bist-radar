@@ -253,7 +253,7 @@ def test_vendor_boundary_misc_payload_failures(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.parametrize(
     "column,value",
-    [("Open", -1), ("High", 5)],
+    [("Open", -1), ("High", 5), ("Volume", -1)],
 )
 def test_invalid_prices_and_ohlc_are_rejected(column: str, value: float) -> None:
     frame = vendor_frame(1)
@@ -262,6 +262,15 @@ def test_invalid_prices_and_ohlc_are_rejected(column: str, value: float) -> None
         YFinanceResearchProvider(lambda **_: frame).download(
             "THYAO", date(2025, 1, 1), date(2025, 2, 1)
         )
+
+
+def test_invalid_timestamp_reason_is_auditable() -> None:
+    frame = vendor_frame(2)
+    frame.index = pd.Index(["not-a-date", "2025-01-02"])
+    result = YFinanceResearchProvider(lambda **_: frame).download(
+        "THYAO", date(2025, 1, 1), date(2025, 2, 1)
+    )
+    assert result.quality.invalid_reasons == {"TIMESTAMP_ERROR": 1}
 
 
 def test_cache_hash_ttl_and_corruption(tmp_path: Path) -> None:

@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     min_avg_daily_volume: float = 0
     min_history_bars: int = 200
     min_price: float = 0
+    bist_daily_close_time: str = "18:10"
+    research_close_delay_minutes: int = 30
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)

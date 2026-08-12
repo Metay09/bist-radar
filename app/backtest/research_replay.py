@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.backtest.portfolio_accounting import accounting_report
 from app.backtest.replay import HistoricalReplayEngine, replay_performance
 from app.backtest.replay_models import ExecutionOrder, ReplayResult, Timeframe
 from app.data.historical import HistoricalProvider, SymbolMetadata
@@ -242,7 +243,21 @@ def run_research_replay(
     result = HistoricalReplayEngine(
         FrameHistoricalProvider(frames), metadata, strategy, config
     ).run(sorted(frames), Timeframe.D1, None, None, initial_equity)
-    performance = replay_performance(result)
+    legacy_performance = replay_performance(result)
+    all_frames = frames | {"XU100": benchmark}
+    dataset_start = min(frame.timestamp.iloc[0].to_pydatetime() for frame in all_frames.values())
+    dataset_end = max(frame.timestamp.iloc[-1].to_pydatetime() for frame in all_frames.values())
+    eligible_index = min(min_warmup_bars - 1, len(benchmark) - 1)
+    eligible_start = benchmark.timestamp.iloc[eligible_index].to_pydatetime()
+    accounting = accounting_report(
+        result,
+        frames,
+        dataset_start,
+        dataset_end,
+        eligible_start,
+        config.commission_bps,
+        config.slippage_bps,
+    )
     audit_counts = Counter(item["result"] for item in result.audits)
     closed = [trade for trade in result.trades if trade.exit_time]
 
@@ -273,7 +288,28 @@ def run_research_replay(
         "bars": sum(len(frame) for frame in frames.values()) + len(benchmark),
         "signals": len(result.audits),
         "trades": len(result.trades),
-        "performance": performance,
+        "performance": accounting,
+        "trade_statistics": {
+            key: value
+            for key, value in legacy_performance.items()
+            if key
+            not in {
+                "total_return",
+                "cagr",
+                "max_drawdown",
+                "sharpe_ratio",
+                "sortino_ratio",
+                "final_equity",
+                "net_pnl",
+                "exposure_percent",
+            }
+        },
+        "accounting_audit": {
+            "superseded_trade_compounded_total_return": legacy_performance["total_return"],
+            "superseded_trade_return_sharpe": legacy_performance["sharpe_ratio"],
+            "superseded_trade_return_sortino": legacy_performance["sortino_ratio"],
+            "reason": "trade returns overlap and are not a portfolio equity return series",
+        },
         "rejections": dict(strategy.rejections | audit_counts),
         "costs": {"commission_bps": "10", "slippage_bps": "5"},
         "market_regimes": {

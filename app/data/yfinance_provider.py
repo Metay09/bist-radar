@@ -172,9 +172,14 @@ class YFinanceResearchProvider:
                     timestamp = timestamp.tz_localize("Europe/Istanbul")
                 timestamp = timestamp.tz_convert("UTC")
                 fields = ("open", "high", "low", "close", "volume")
-                values = [decimal_from_vendor(row[c]) for c in fields]
                 if any(pd.isna(row[c]) for c in ("open", "high", "low", "close", "volume")):
-                    raise ValueError("NaN")
+                    quality.invalid_reason("NAN_OHLCV")
+                    continue
+                try:
+                    values = [decimal_from_vendor(row[c]) for c in fields]
+                except ValueError:
+                    quality.invalid_reason("INVALID_NUMERIC")
+                    continue
                 bar = CanonicalBar(
                     symbol=symbol,
                     timestamp=timestamp.to_pydatetime(),
@@ -192,13 +197,18 @@ class YFinanceResearchProvider:
                     ),
                     quality_flags=self.mandatory_flags,
                 )
-                if min(bar.open, bar.high, bar.low, bar.close) <= Decimal("0") or bar.volume < 0:
-                    raise ValueError("invalid values")
+                if min(bar.open, bar.high, bar.low, bar.close) <= Decimal("0"):
+                    quality.invalid_reason("NON_POSITIVE_PRICE")
+                    continue
+                if bar.volume < 0:
+                    quality.invalid_reason("NEGATIVE_VOLUME")
+                    continue
                 if not (bar.low <= bar.open <= bar.high and bar.low <= bar.close <= bar.high):
-                    raise ValueError("invalid OHLC")
+                    quality.invalid_reason("OHLC_INCONSISTENCY")
+                    continue
                 bars.append(bar)
             except (TypeError, ValueError):
-                quality.invalid += 1
+                quality.invalid_reason("TIMESTAMP_ERROR")
         quality.bars_valid = len(bars)
         quality.zero_volume = sum(bar.volume == 0 for bar in bars)
         quality.large_gaps = sum(

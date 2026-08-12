@@ -1,12 +1,21 @@
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from typing import Protocol, TypeVar
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from app.data.canonical import QualityFlag
+
+TBar = TypeVar("TBar", bound="Timestamped")
+
+
+class Timestamped(Protocol):
+    @property
+    def timestamp(self) -> datetime: ...
 
 
 @dataclass(frozen=True)
@@ -123,6 +132,7 @@ class SymbolQuality:
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
     flags: list[str] = field(default_factory=list)
+    invalid_reasons: dict[str, int] = field(default_factory=dict)
 
     @property
     def quality_score(self) -> float:
@@ -130,6 +140,36 @@ class SymbolQuality:
             return 0
         penalties = self.invalid + self.duplicates
         return max(0.0, min(100.0, (self.bars_received - penalties) / self.bars_received * 100))
+
+    def invalid_reason(self, reason: str) -> None:
+        self.invalid += 1
+        self.invalid_reasons[reason] = self.invalid_reasons.get(reason, 0) + 1
+
+
+def is_completed_daily_bar(
+    timestamp: datetime,
+    now: datetime,
+    close_time: time = time(18, 10),
+    close_delay: timedelta = timedelta(minutes=30),
+) -> bool:
+    if timestamp.tzinfo is None or now.tzinfo is None:
+        raise ValueError("timezone-aware timestamps required")
+    istanbul = ZoneInfo("Europe/Istanbul")
+    bar_date = timestamp.astimezone(istanbul).date()
+    local_now = now.astimezone(istanbul)
+    completion = datetime.combine(bar_date, close_time, istanbul) + close_delay
+    return local_now >= completion
+
+
+def completed_daily_bars(
+    bars: list[TBar],
+    now: datetime,
+    close_time: time = time(18, 10),
+    close_delay: timedelta = timedelta(minutes=30),
+) -> list[TBar]:
+    return [
+        bar for bar in bars if is_completed_daily_bar(bar.timestamp, now, close_time, close_delay)
+    ]
 
 
 def liquidity_rejection(

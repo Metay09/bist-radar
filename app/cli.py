@@ -1,6 +1,6 @@
 import argparse
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -9,7 +9,7 @@ from app.backtest.research_replay import research_scan, run_research_replay
 from app.core.config import get_settings
 from app.data.canonical import CanonicalBar, dataset_hash
 from app.data.readiness import assert_environment_compatible
-from app.data.research import ResearchCache, load_universe
+from app.data.research import ResearchCache, completed_daily_bars, load_universe
 from app.data.research_repository import ResearchRepository
 from app.data.yfinance_provider import YFinanceResearchProvider
 
@@ -35,6 +35,21 @@ def download_research(start: date, end: date) -> tuple[list[CanonicalBar], dict[
     bars = [bar for result in results.values() for bar in result.bars]
     invalid = sum(result.quality.invalid for result in results.values())
     duplicates = sum(result.quality.duplicates for result in results.values())
+    invalid_by_reason: dict[str, int] = {}
+    quality_by_symbol: dict[str, object] = {}
+    for symbol, result in sorted(results.items()):
+        quality_by_symbol[symbol] = {
+            "bars_received": result.quality.bars_received,
+            "bars_valid": result.quality.bars_valid,
+            "invalid": result.quality.invalid,
+            "duplicates": result.quality.duplicates,
+            "zero_volume": result.quality.zero_volume,
+            "large_gaps": result.quality.large_gaps,
+            "invalid_reasons": result.quality.invalid_reasons,
+            "quality_score": result.quality.quality_score,
+        }
+        for reason, count in result.quality.invalid_reasons.items():
+            invalid_by_reason[reason] = invalid_by_reason.get(reason, 0) + count
     report: dict[str, object] = {
         "provider": "yfinance-research",
         "provider_flags": [
@@ -55,6 +70,8 @@ def download_research(start: date, end: date) -> tuple[list[CanonicalBar], dict[
         "total_bars": len(bars),
         "valid_bars": len(bars),
         "invalid_bars": invalid,
+        "invalid_by_reason": invalid_by_reason,
+        "quality_by_symbol": quality_by_symbol,
         "duplicates": duplicates,
         "quality_score": max(0, len(bars) / max(1, len(bars) + invalid) * 100),
         "adjusted": settings.research_price_mode == "adjusted",
@@ -88,6 +105,13 @@ def main() -> None:
     if not args.dataset_id:
         parser.error("--dataset-id is required")
     bars = repository.bars(args.dataset_id)
+    close_hour, close_minute = map(int, get_settings().bist_daily_close_time.split(":"))
+    bars = completed_daily_bars(
+        bars,
+        datetime.now(UTC),
+        time(close_hour, close_minute),
+        timedelta(minutes=get_settings().research_close_delay_minutes),
+    )
     if args.command == "research-scan":
         report = research_scan(bars, get_settings().min_warmup_bars)
         repository.save_report("scan", args.dataset_id, report)
