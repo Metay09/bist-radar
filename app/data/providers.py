@@ -1,11 +1,43 @@
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 
 import pandas as pd
+
+from app.models.domain import DataStatus
 
 
 class ProviderError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ProviderResult:
+    status: DataStatus
+    bars: pd.DataFrame | None
+    error: str | None = None
+
+
+def fetch_with_retry(
+    provider: "MarketDataProvider",
+    symbol: str,
+    attempts: int = 3,
+    backoff_seconds: float = 0.1,
+    sleeper: Callable[[float], None] = sleep,
+) -> ProviderResult:
+    if attempts < 1:
+        raise ValueError("attempts must be positive")
+    for attempt in range(attempts):
+        try:
+            return ProviderResult(DataStatus.OK, provider.get_daily_bars(symbol))
+        except (ProviderError, TimeoutError) as exc:
+            if attempt + 1 < attempts:
+                sleeper(backoff_seconds * (2**attempt))
+            else:
+                return ProviderResult(DataStatus.PROVIDER_DOWN, None, type(exc).__name__)
+    raise AssertionError("unreachable")
 
 
 class MarketDataProvider(ABC):

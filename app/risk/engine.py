@@ -6,6 +6,7 @@ D = Decimal
 DEFAULT_ATR_MULTIPLIER = D("1.2")
 DEFAULT_RISK_PERCENT = D("0.75")
 DEFAULT_MAX_POSITION_PERCENT = D("20")
+MIN_STOP_DISTANCE_PERCENT = D("0.10")
 
 
 def calculate_stop(
@@ -44,6 +45,8 @@ def position_size(
 ) -> Decimal:
     if account_equity <= 0 or entry <= 0 or stop <= 0 or stop >= entry:
         raise ValueError("invalid sizing inputs")
+    if (entry - stop) / entry * 100 < MIN_STOP_DISTANCE_PERCENT:
+        raise ValueError("stop distance is extremely small")
     risk_budget = account_equity * risk_percent / 100
     shares = (risk_budget / (entry - stop)).to_integral_value(rounding=ROUND_DOWN)
     cap = (account_equity * max_position_percent / 100 / entry).to_integral_value(

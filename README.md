@@ -29,6 +29,8 @@ Tüm örnekler `.env.example` dosyasındadır. Varsayılanlar: veri kalitesi 90,
 
 `GET /health`, `/ready`, `/symbols`, `/radar`, `/radar/{symbol}`, `/signals`, `/paper/trades`, `/paper/performance`, `/system/status`. Yanıtlarda paper-mode ve yatırım tavsiyesi olmadığı vurgulanır. Swagger: `/docs`.
 
+Paper trade ledger PostgreSQL üzerinde kalıcıdır. `active_symbol` unique constraint'i aynı sembolde yalnız bir açık işleme izin verir; repository işlemleri transaction içinde atomik çalışır. API restart kayıtları kaybettirmez.
+
 ## Provider ekleme
 
 Piyasa verisi için `MarketDataProvider`, KAP için `KapProvider`, takas için `TakasProvider` sınıfını uygulayın ve dependency injection ile servise verin. HTML scraping production sağlayıcısı değildir. Licensed provider ağ hatalarında sınırlı retry/backoff uygulamalı, sonra `PROVIDER_DOWN` dönmelidir. İkinci piyasa kaynağı fiyat toleransı aşınca `DATA_CONFLICT` üretmelidir. KAP ham metni değişmeden saklanır; takas yoksa `TAKAS_DATA_UNAVAILABLE` normal durumdur.

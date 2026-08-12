@@ -23,8 +23,24 @@ services:
     ports: ["127.0.0.1:${API_PORT:-8765}:8765"]
     depends_on:
       bist-radar-db: {condition: service_healthy}
+      bist-radar-migrate: {condition: service_completed_successfully}
     networks: [bist-radar-network]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  bist-radar-migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bist_radar}:${POSTGRES_PASSWORD}@bist-radar-db:5432/${POSTGRES_DB:-bist_radar}
+      TRADING_MODE: paper
+    depends_on:
+      bist-radar-db: {condition: service_healthy}
+    networks: [bist-radar-network]
+    restart: "no"
   bist-radar-worker:
     build: .
     command: ["python", "-m", "app.worker"]
@@ -33,6 +49,7 @@ services:
       TRADING_MODE: paper
     depends_on:
       bist-radar-db: {condition: service_healthy}
+      bist-radar-migrate: {condition: service_completed_successfully}
     networks: [bist-radar-network]
     restart: unless-stopped
 networks:

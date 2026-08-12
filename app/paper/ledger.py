@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -41,8 +41,24 @@ class PaperLedger:
         target_1: Decimal,
         target_2: Decimal,
     ) -> PaperTrade:
-        if not (size > 0 and stop < entry < target_1 < target_2):
+        trade = self.create(symbol, when, entry, size, stop, target_1, target_2)
+        self.trades.append(trade)
+        return trade
+
+    def create(
+        self,
+        symbol: str,
+        when: datetime,
+        entry: Decimal,
+        size: Decimal,
+        stop: Decimal,
+        target_1: Decimal,
+        target_2: Decimal,
+    ) -> PaperTrade:
+        if not symbol or not (size > 0 and stop < entry < target_1 < target_2):
             raise ValueError("invalid paper trade")
+        if self.commission_bps < 0 or self.slippage_bps < 0:
+            raise ValueError("fees and slippage cannot be negative")
         adjusted = entry * (1 + self.slippage_bps / Decimal("10000"))
         trade = PaperTrade(
             str(uuid4()),
@@ -56,13 +72,24 @@ class PaperLedger:
             target_2,
             slippage=(adjusted - entry) * size,
         )
-        self.trades.append(trade)
         return trade
 
     def close(self, trade_id: str, when: datetime, price: Decimal, reason: str) -> PaperTrade:
         trade = next(t for t in self.trades if t.trade_id == trade_id)
+        return self.close_trade(trade, when, price, reason)
+
+    def close_trade(
+        self, trade: PaperTrade, when: datetime, price: Decimal, reason: str
+    ) -> PaperTrade:
         if trade.exit_time:
             raise ValueError("trade already closed")
+        entry_time = trade.entry_time
+        if entry_time.tzinfo is None:
+            entry_time = entry_time.replace(tzinfo=UTC)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        if price <= 0 or when < entry_time:
+            raise ValueError("invalid paper trade exit")
         adjusted = price * (1 - self.slippage_bps / Decimal("10000"))
         trade.exit_time, trade.exit_price, trade.exit_reason = when, adjusted, reason
         trade.gross_return = (adjusted - trade.entry_price) * trade.position_size
@@ -77,7 +104,11 @@ class PaperLedger:
         return trade
 
     def performance(self) -> dict[str, float | int]:
-        closed = [t for t in self.trades if t.exit_time]
+        return self.performance_for(self.trades)
+
+    @staticmethod
+    def performance_for(trades: list[PaperTrade]) -> dict[str, float | int]:
+        closed = [t for t in trades if t.exit_time]
         wins = [t for t in closed if t.net_return > 0]
         return {
             "number_of_trades": len(closed),
