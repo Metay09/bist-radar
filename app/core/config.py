@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     require_verified_calendar: bool = True
     raw_payload_archive_enabled: bool = False
     raw_payload_retention_days: int = 7
+    research_price_mode: Literal["adjusted", "unadjusted"] = "adjusted"
+    research_cache_dir: str = "data/research-cache"
+    research_cache_ttl_hours: int = 24
+    research_download_attempts: int = 3
+    research_batch_size: int = 25
+    min_warmup_bars: int = 200
+    min_avg_daily_value_traded: float = 0
+    min_avg_daily_volume: float = 0
+    min_history_bars: int = 200
+    min_price: float = 0
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)

@@ -3,6 +3,7 @@ import json
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
@@ -66,6 +67,10 @@ class HistoricalReplayEngine:
             raise ValueError("unknown symbol")
         frames = {s: self.provider.load(s, timeframe, start, end) for s in symbols}
         timeline = sorted(set().union(*(set(f.timestamp) for f in frames.values())))
+        positions = {
+            symbol: {stamp: index for index, stamp in enumerate(frame.timestamp)}
+            for symbol, frame in frames.items()
+        }
         result = ReplayResult(
             run_id or str(uuid4()),
             initial_equity,
@@ -84,11 +89,16 @@ class HistoricalReplayEngine:
             now = stamp.to_pydatetime()
             clock.advance(now)
             result.last_processed_timestamp = now
+            current_bars: dict[str, Any] = {}
+            visible_frames: dict[str, pd.DataFrame] = {}
             for symbol, frame in frames.items():
-                visible = frame[frame.timestamp <= stamp]
-                if visible.empty or visible.iloc[-1].timestamp != stamp:
+                position = positions[symbol].get(stamp)
+                if position is None:
                     continue
+                visible = frame.iloc[: position + 1]
+                visible_frames[symbol] = visible
                 bar = visible.iloc[-1]
+                current_bars[symbol] = bar
                 op, hi, lo = map(lambda x: Decimal(str(x)), (bar.open, bar.high, bar.low))
                 for trade in list(open_trades):
                     if trade.symbol == symbol:
@@ -100,7 +110,23 @@ class HistoricalReplayEngine:
                                 EquityPoint(now, equity, peak, equity / peak - 1)
                             )
                             open_trades.remove(trade)
-                order = pending.pop(symbol, None)
+            eligible = [pending.pop(symbol) for symbol in current_bars if symbol in pending]
+            eligible.sort(
+                key=lambda order: (
+                    -order.score,
+                    -order.data_quality,
+                    -float(
+                        (order.target_2 - order.expected_entry)
+                        / (order.expected_entry - order.stop)
+                    ),
+                    order.symbol,
+                )
+            )
+            for order in eligible:
+                symbol = order.symbol
+                visible = visible_frames[symbol]
+                bar = current_bars[symbol]
+                op = Decimal(str(bar.open))
                 if order:
                     if (
                         len(visible) > 1
@@ -125,6 +151,8 @@ class HistoricalReplayEngine:
                         if entered:
                             result.trades.append(entered)
                             open_trades.append(entered)
+            for symbol in current_bars:
+                visible = visible_frames[symbol]
                 signal = self.strategy(symbol, visible.copy())
                 if signal:
                     if (

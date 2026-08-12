@@ -51,6 +51,40 @@ def features(frame: pd.DataFrame) -> dict[str, float | bool]:
     }
 
 
+def feature_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """Causal vector form of ``features`` for deterministic large replays."""
+    close = frame.close
+    e20, e50, e200 = ema(close, 20), ema(close, 50), ema(close, 200)
+    m = macd(close)
+    prior_high = frame.high.shift(1).rolling(20).max()
+    prior_low = frame.low.shift(1).rolling(10).min()
+    spread = (frame.high - frame.low).clip(lower=1e-9)
+    return pd.DataFrame(
+        {
+            "price_above_ema20": close > e20,
+            "price_above_ema50": close > e50,
+            "price_above_ema200": close > e200,
+            "ema20_above_ema50": e20 > e50,
+            "ema50_above_ema200": e50 > e200,
+            "ema20_slope": e20.diff(5),
+            "ema50_slope": e50.diff(5),
+            "higher_high": frame.high > frame.high.shift(5),
+            "higher_low": frame.low > frame.low.shift(5),
+            "rsi": rsi(close),
+            "macd_histogram": m.histogram,
+            "macd_slope": m.macd.diff(3),
+            "roc": roc(close),
+            "rvol": relative_volume(frame.volume),
+            "breakout": close > prior_high,
+            "close_quality": (close - frame.low) / spread,
+            "atr": atr(frame),
+            "volatility": rolling_volatility(close),
+            "recent_low": prior_low,
+        },
+        index=frame.index,
+    )
+
+
 def classify_trend(f: dict[str, float | bool]) -> Trend:
     positives = sum(
         bool(f[key])

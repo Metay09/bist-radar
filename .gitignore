@@ -1,4 +1,6 @@
 .env
+data/research-cache/
+data/research-datasets/
 .venv/
 __pycache__/
 *.py[cod]

@@ -43,6 +43,11 @@ Piyasa verisi için `MarketDataProvider`, KAP için `KapProvider`, takas için `
 
 Telegram token yokken `MockTelegramNotifier` kullanılır. Gerçek entegrasyon eklendiğinde token yalnız environment'tan alınmalı.
 
+Ücretsiz historical research akışı `YFinanceResearchProvider` ile sağlanır. Bu resmi Borsa
+İstanbul verisi değildir; `RESEARCH_ONLY` ve `UNVERIFIED_SOURCE` olarak etiketlenir ve
+production/live doğrulamada kullanılamaz. Dry-run, cache, survivorship bias ve frozen dataset
+iş akışı için [docs/free-research-data.md](docs/free-research-data.md) belgesine bakın.
+
 ## Demo ve test
 
 Deterministik `rally`, `flat`, `selloff`, `bad_data` ve `xu100` fixture'ları bulunur. `make check` format, Ruff, mypy, pytest ve coverage kapısını çalıştırır. Backtest sinyali kapanış `t` ile hesaplar ve girişi `t+1` açılışında yapar. Evren geçmişi sağlanmadan survivorship-bias ortadan kaldırılamaz; raporlarda bu kısıt belirtilmelidir. Split/temettü ayarı provider metadata'sıyla doğrulanmalıdır.

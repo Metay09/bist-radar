@@ -39,7 +39,23 @@ class MarketBarRow(Base):
     low: Mapped[float] = mapped_column(Float)
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float)
-    __table_args__ = (Index("uq_bar_symbol_time", "symbol", "timestamp", unique=True),)
+    timeframe: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_adjusted: Mapped[bool | None] = mapped_column(nullable=True)
+    adjustment_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    quality_flags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    __table_args__ = (
+        Index(
+            "uq_bar_provider_symbol_tf_time",
+            "provider_id",
+            "symbol",
+            "timeframe",
+            "timestamp",
+            unique=True,
+        ),
+    )
 
 
 class EventRow(Base):
@@ -156,6 +172,15 @@ class QuarantinedDataRow(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
     errors: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ResearchReportRow(Base):
+    __tablename__ = "research_reports"
+    report_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    report_type: Mapped[str] = mapped_column(String(20), index=True)
+    dataset_id: Mapped[str] = mapped_column(String(36), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
 def engine() -> Engine:

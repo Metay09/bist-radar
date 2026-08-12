@@ -3,6 +3,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY pyproject.toml ./
 COPY app ./app
+COPY config ./config
 COPY migrations ./migrations
 COPY alembic.ini ./
 COPY tests/fixtures ./tests/fixtures

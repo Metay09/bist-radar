@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
+from numbers import Real
 
 from app.backtest.replay_models import Timeframe
 
@@ -13,6 +14,7 @@ class DataMode(StrEnum):
     DELAYED = "DELAYED"
     EOD = "EOD"
     FIXTURE = "FIXTURE"
+    RESEARCH = "RESEARCH"
 
 
 class QualityFlag(StrEnum):
@@ -21,6 +23,10 @@ class QualityFlag(StrEnum):
     UNVERIFIED_SOURCE = "UNVERIFIED_SOURCE"
     CLOCK_ANOMALY = "CLOCK_ANOMALY"
     POSSIBLE_CORPORATE_ACTION = "POSSIBLE_CORPORATE_ACTION"
+    SURVIVORSHIP_BIAS_POSSIBLE = "SURVIVORSHIP_BIAS_POSSIBLE"
+    DATA_RANGE_INCOMPLETE = "DATA_RANGE_INCOMPLETE"
+    UNVERIFIED_CORPORATE_ACTION = "UNVERIFIED_CORPORATE_ACTION"
+    ASSUMED_COST_MODEL = "ASSUMED_COST_MODEL"
 
 
 class SessionState(StrEnum):
@@ -84,8 +90,8 @@ class CanonicalBar:
 
 
 def decimal_from_vendor(value: object) -> Decimal:
-    if isinstance(value, float):
-        value = repr(value)
+    if isinstance(value, Real) and not isinstance(value, bool):
+        value = repr(float(value))
     try:
         result = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
@@ -134,7 +140,6 @@ def dataset_hash(bars: list[CanonicalBar]) -> str:
             "close": str(bar.close),
             "volume": str(bar.volume),
             "provider": bar.provider,
-            "received_at": bar.received_at.isoformat(),
             "is_adjusted": bar.is_adjusted,
             "adjustment_type": bar.adjustment_type,
             "quality_flags": [flag.value for flag in bar.quality_flags],

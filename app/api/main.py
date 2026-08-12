@@ -17,7 +17,9 @@ from app.backtest.repository import ReplayRepository
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.data.historical import CsvHistoricalProvider, SymbolMetadata
+from app.data.research_repository import ResearchRepository
 from app.data.vendor_mock import MockVendorA, MockVendorB
+from app.data.yfinance_provider import YFinanceResearchProvider
 from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
@@ -38,6 +40,7 @@ app = FastAPI(title=settings.app_name, description=DISCLAIMER, lifespan=lifespan
 ledger = PaperLedger()
 paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
+research_repository = ResearchRepository()
 
 
 class ReplayRequest(BaseModel):
@@ -214,7 +217,7 @@ def provider_payload(provider: Any) -> dict[str, object]:
 
 @app.get("/providers")
 def providers() -> list[dict[str, object]]:
-    return [provider_payload(p) for p in (MockVendorA(), MockVendorB())]
+    return [provider_payload(p) for p in (MockVendorA(), MockVendorB(), YFinanceResearchProvider())]
 
 
 @app.get("/providers/health")
@@ -227,6 +230,53 @@ def providers_health() -> list[dict[str, object]]:
         }
         for p in (MockVendorA(), MockVendorB())
     ]
+
+
+@app.get("/research/status")
+def research_status() -> dict[str, object]:
+    provider = YFinanceResearchProvider()
+    return {
+        **provider_payload(provider),
+        "health": "UNKNOWN",
+        "network_dependency": True,
+        "production_approved": False,
+        "flags": [flag.value for flag in provider.mandatory_flags],
+    }
+
+
+@app.get("/research/scan")
+def latest_research_scan() -> dict[str, object]:
+    report = research_repository.latest_report("scan")
+    if report is None:
+        raise HTTPException(404, "research scan not available")
+    return report
+
+
+@app.get("/research/scan/{symbol}")
+def research_scan_symbol(symbol: str) -> dict[str, object]:
+    report = latest_research_scan()
+    candidates = report.get("candidates", [])
+    if not isinstance(candidates, list):
+        raise HTTPException(500, "invalid research report")
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if isinstance(item, dict) and item.get("symbol") == symbol.upper()
+        ),
+        None,
+    )
+    if candidate is None:
+        raise HTTPException(404, "research symbol not available")
+    return {str(key): value for key, value in candidate.items()}
+
+
+@app.get("/research/replay/latest")
+def latest_research_replay() -> dict[str, object]:
+    report = research_repository.latest_report("replay")
+    if report is None:
+        raise HTTPException(404, "research replay not available")
+    return report
 
 
 @app.get("/data/quality")
