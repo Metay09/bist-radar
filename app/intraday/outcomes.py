@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from enum import StrEnum
 from zoneinfo import ZoneInfo
 
@@ -78,7 +78,8 @@ def label_signal(
     result: dict[str, HorizonOutcome] = {}
     # A live tracker must never label from bars that exist in a preloaded frame but
     # are still in the simulation future.
-    future_all = bars.loc[(bars.index > signal_time) & (bars.index <= now)]
+    completed_before = now - timedelta(minutes=15)
+    future_all = bars.loc[(bars.index > signal_time) & (bars.index <= completed_before)]
     for name, bar_count in HORIZONS.items():
         future = future_all.iloc[:bar_count]
         if len(future) < bar_count:

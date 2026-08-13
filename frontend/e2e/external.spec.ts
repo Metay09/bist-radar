@@ -11,8 +11,10 @@ test('yayındaki gerçek dashboard ekranları',async({page})=>{
     await page.goto(`${externalUrl}${path}`);
     await expect(page.locator('.desktop-sidebar')).toBeHidden();
     await expect(page.locator('.bottom')).toBeVisible();
-    await page.waitForLoadState('networkidle');
-    await expect(page.locator('.skeleton')).toHaveCount(0);
+    // The production dashboard polls health/data endpoints, so networkidle is
+    // not a valid readiness signal.  The skeleton disappearing is the user-
+    // visible contract that the route has finished loading.
+    await expect(page.locator('.skeleton')).toHaveCount(0,{timeout:15_000});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
     await expect(page.locator('pre')).toHaveCount(0);
     await expect(page.getByText('PERSIST_OPEN')).toHaveCount(0);

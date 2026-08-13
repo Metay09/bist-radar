@@ -146,7 +146,22 @@ def universe() -> list[str]:
 
 @app.get("/universe/summary")
 def universe_summary() -> dict[str, object]:
-    return universe_repository.summary(settings.intraday_stale_minutes)
+    summary = universe_repository.summary(settings.intraday_stale_minutes)
+    report = research_repository.latest_report("intraday_scan", require_candidates=True) or {}
+    scanned = report.get("stage_b_symbols")
+    actually_scanned = scanned if isinstance(scanned, int) else None
+    active = summary.get("total_active_equities")
+    summary["pre_scan_eligible"] = summary.get("eligible_for_radar")
+    summary["actually_scanned"] = actually_scanned
+    summary["scan_coverage_percent"] = (
+        round(actually_scanned / active * 100, 2)
+        if actually_scanned is not None and isinstance(active, int) and active
+        else None
+    )
+    if actually_scanned is not None:
+        summary["eligible_for_radar"] = actually_scanned
+        summary["coverage_percent"] = summary["scan_coverage_percent"]
+    return summary
 
 
 @app.get("/universe/failures")
@@ -340,7 +355,7 @@ def latest_research_replay() -> dict[str, object]:
 
 @app.get("/intraday/status")
 def intraday_status() -> dict[str, object]:
-    latest = research_repository.latest_report("intraday_scan")
+    latest = research_repository.latest_report("intraday_scan", require_candidates=True)
     return {
         "strategy_id": "radar-intraday-v1",
         "provider": "yfinance-research",
@@ -353,7 +368,7 @@ def intraday_status() -> dict[str, object]:
 
 @app.get("/intraday/scan")
 def intraday_scan() -> dict[str, object]:
-    report = research_repository.latest_report("intraday_scan")
+    report = research_repository.latest_report("intraday_scan", require_candidates=True)
     if report is None:
         return {"strategy_id": "radar-intraday-v1", "candidates": [], "status": "NO_SCAN"}
     return report

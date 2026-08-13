@@ -38,7 +38,7 @@ def test_health_and_demo_expected_behaviour() -> None:
 def test_intraday_and_shadow_read_only_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.api.main.research_repository.latest_report",
-        lambda report_type: None,
+        lambda report_type, **kwargs: None,
     )
     monkeypatch.setattr(
         "app.api.main.intraday_repository.status",

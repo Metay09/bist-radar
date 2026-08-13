@@ -70,6 +70,27 @@ def run() -> None:
     next_universe_refresh = datetime.min.replace(tzinfo=UTC)
     while True:
         now = datetime.now(UTC)
+        if now >= next_scan and not market_open(now):
+            if now >= next_universe_refresh:
+                try:
+                    discovery = KapMarketUniverseSource().fetch()
+                    refresh = UniverseRepository().save(discovery)
+                    mark_job("universe_refresh", True, dict(refresh))
+                    next_universe_refresh = next_universe_refresh_at(now)
+                except Exception as universe_exc:
+                    mark_job("universe_refresh", False, {"reason": type(universe_exc).__name__})
+                    next_universe_refresh = min(
+                        now + timedelta(hours=1), next_universe_refresh_at(now)
+                    )
+                    log.warning(
+                        "universe_refresh_failed error=%s; retaining prior snapshot",
+                        type(universe_exc).__name__,
+                    )
+            local = now.astimezone(ZoneInfo("Europe/Istanbul"))
+            minutes = 15 - (local.minute % 15)
+            next_scan = now + timedelta(minutes=minutes, seconds=30 - local.second)
+            time.sleep(30)
+            continue
         if now >= next_scan:
             with job_lock("autonomous_market_scan") as acquired:
                 if acquired:

@@ -98,7 +98,7 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
     monkeypatch.setattr(dashboard, "SessionLocal", factory)
 
     class Reports:
-        def latest_report(self, _: str):
+        def latest_report(self, _: str, **__: object):
             return {"data_timestamp": stamp, "candidates": [features]}
 
     class Intraday:
@@ -127,7 +127,7 @@ def test_candidates_are_unique_newest_and_deterministically_ranked(monkeypatch) 
     same_score = {"symbol": "ASELS", "radar_score": 80, "timestamp": "2026-08-13T10:15:00+00:00"}
 
     class Reports:
-        def latest_report(self, _: str):
+        def latest_report(self, _: str, **__: object):
             return {"candidates": [older, newest, same_score]}
 
     monkeypatch.setattr(dashboard, "ResearchRepository", Reports)

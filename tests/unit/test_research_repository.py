@@ -46,3 +46,8 @@ def test_research_dataset_persistence_duplicate_and_reports() -> None:
     assert repository.latest_report("scan") is None
     repository.save_report("scan", dataset_id, {"candidates": [{"symbol": "THYAO"}]})
     assert repository.latest_report("scan") == {"candidates": [{"symbol": "THYAO"}]}
+    repository.save_report("scan", dataset_id, {"candidates": []})
+    assert repository.latest_report("scan") == {"candidates": []}
+    assert repository.latest_report("scan", require_candidates=True) == {
+        "candidates": [{"symbol": "THYAO"}]
+    }

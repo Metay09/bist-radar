@@ -175,12 +175,18 @@ class ResearchRepository:
             )
         return report_id
 
-    def latest_report(self, report_type: str) -> dict[str, object] | None:
+    def latest_report(
+        self, report_type: str, *, require_candidates: bool = False
+    ) -> dict[str, object] | None:
         with self.session_factory() as session:
-            row = session.scalar(
+            rows = session.scalars(
                 select(ResearchReportRow)
                 .where(ResearchReportRow.report_type == report_type)
                 .order_by(ResearchReportRow.created_at.desc())
-                .limit(1)
-            )
-            return None if row is None else row.payload
+                .limit(100 if require_candidates else 1)
+            ).all()
+            for row in rows:
+                candidates = row.payload.get("candidates")
+                if not require_candidates or (isinstance(candidates, list) and candidates):
+                    return {str(key): value for key, value in row.payload.items()}
+            return None

@@ -25,7 +25,7 @@ def test_pending_partial_and_all_intraday_horizons() -> None:
     pending = label_signal(signal, 100, bars(signal), signal + timedelta(minutes=10))
     assert pending["15m"].status == LabelStatus.LABEL_PENDING
     assert lifecycle(pending) == "OUTCOME_PENDING"
-    partial = label_signal(signal, 100, bars(signal), signal + timedelta(minutes=70))
+    partial = label_signal(signal, 100, bars(signal), signal + timedelta(minutes=76))
     assert partial["15m"].forward_return is not None
     assert partial["30m"].status == LabelStatus.LABEL_AVAILABLE
     assert partial["60m"].hit_plus_1_percent

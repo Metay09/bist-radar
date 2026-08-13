@@ -43,7 +43,7 @@ def freshness(timestamp: datetime | None, stale_minutes: int = 45) -> dict[str, 
 
 
 def dashboard_summary() -> dict[str, object]:
-    report = ResearchRepository().latest_report("intraday_scan") or {}
+    report = ResearchRepository().latest_report("intraday_scan", require_candidates=True) or {}
     report_candidates = report.get("candidates", [])
     candidates = _unique_candidates(
         report_candidates if isinstance(report_candidates, list) else []
@@ -84,7 +84,7 @@ def dashboard_summary() -> dict[str, object]:
 
 
 def candidates() -> list[dict[str, object]]:
-    report = ResearchRepository().latest_report("intraday_scan") or {}
+    report = ResearchRepository().latest_report("intraday_scan", require_candidates=True) or {}
     rows = report.get("candidates", [])
     if not isinstance(rows, list):
         return []
