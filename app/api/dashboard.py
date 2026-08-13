@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, time
 from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, func, select
 
 from app.core.config import get_settings
+from app.data.research import load_universe
 from app.data.research_repository import ResearchRepository
 from app.database.base import (
     MarketBarRow,
@@ -13,6 +15,7 @@ from app.database.base import (
     NotificationEventRow,
     PaperTradeRow,
     SessionLocal,
+    UniverseSymbolRow,
     WorkerStateRow,
 )
 from app.intraday.repository import IntradayRepository
@@ -85,7 +88,12 @@ def candidates() -> list[dict[str, object]]:
     rows = report.get("candidates", [])
     if not isinstance(rows, list):
         return []
-    return _unique_candidates(rows)
+    bist100 = {
+        member.symbol
+        for member in load_universe(Path("config/universes/bist100.csv")).members
+        if member.active
+    }
+    return [row | {"bist100_member": row["symbol"] in bist100} for row in _unique_candidates(rows)]
 
 
 def _candidate_timestamp(row: dict[str, object]) -> datetime:
@@ -173,6 +181,7 @@ def symbol_detail(symbol: str, limit: int = 160) -> dict[str, object] | None:
             .order_by(MlFeatureSnapshotRow.signal_time)
             .limit(200)
         ).all()
+        universe = session.get(UniverseSymbolRow, canonical)
     if candidate is None and not bars:
         return None
     return {
@@ -192,6 +201,18 @@ def symbol_detail(symbol: str, limit: int = 160) -> dict[str, object] | None:
         "progression": [dict(row.features) | {"lifecycle": row.lifecycle} for row in progression],
         "freshness": freshness(bars[0].timestamp if bars else None),
         "trade_plan": trade_plan(canonical),
+        "universe_metadata": (
+            {
+                "universe": "BIST Tüm",
+                "company_name": universe.company_name,
+                "market": universe.market,
+                "provider": "Yahoo Research",
+                "provider_status": universe.provider_status,
+                "validation_status": universe.validation_status,
+            }
+            if universe is not None
+            else None
+        ),
     }
 
 

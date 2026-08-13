@@ -16,6 +16,7 @@ from app.intraday.core import (
     provider_latency,
     scan_symbol,
     slot_relative_volume,
+    stage_a_eligible,
 )
 
 
@@ -71,6 +72,18 @@ def test_provider_latency_statistics_and_anomaly_visibility() -> None:
     assert result["latest"] == 30
     assert result["p95"] > result["p50"]
     assert provider_latency([], received)["p99"] == 0
+
+
+def test_stage_a_quality_and_early_mover_override() -> None:
+    data = frame(60)
+    assert stage_a_eligible(data) == (True, "ELIGIBLE")
+    assert stage_a_eligible(data.head(20)) == (False, "LIMITED_HISTORY")
+    illiquid = data.copy()
+    illiquid.loc[illiquid.index[-20:], "volume"] = 0
+    assert stage_a_eligible(illiquid) == (False, "LIQUIDITY_FILTER")
+    illiquid.loc[illiquid.index[-2], ["close", "volume"]] = [100, 100]
+    illiquid.loc[illiquid.index[-1], ["close", "volume"]] = [103, 1000]
+    assert stage_a_eligible(illiquid) == (True, "EARLY_MOVER_OVERRIDE")
 
 
 def test_incremental_update_duplicate_and_revision() -> None:

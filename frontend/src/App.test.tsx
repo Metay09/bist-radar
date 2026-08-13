@@ -40,9 +40,17 @@ describe('dashboard UX',()=>{
     expect(await screen.findByRole('heading',{name:'Sinyaller'})).toBeInTheDocument();expect(document.querySelector('.history-card')).toBeInTheDocument();
     expect(screen.getByText(/Sonucu bekleniyor/)).toBeInTheDocument();
   });
+  it('does not render a null outcome as zero and converts return ratios to percent',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');
+    vi.stubGlobal('fetch',vi.fn((url:string)=>Promise.resolve({ok:true,json:()=>Promise.resolve(url.includes('/signals/outcomes')?[{signal_id:'s1',forward_return_15m:.0125,maximum_favorable_excursion:.02}]:url.includes('/signals/history')?[{...candidate,signal_id:'s1',lifecycle:'PARTIALLY_LABELED'}]:[])})));
+    render(<MemoryRouter initialEntries={['/signals']}><App/></MemoryRouter>);
+    expect(await screen.findByText('%1,25')).toBeInTheDocument();
+    expect(screen.getByText('%2,00')).toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
   it('shows shadow insufficient data warning',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);
-    expect((await screen.findAllByText(/Henüz yeterli sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/Her uygun sinyal/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/Henüz tüm takip ufukları sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/her sinyali yalnız bir kez/)).toBeInTheDocument();
   });
   it('handles provider failure',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);

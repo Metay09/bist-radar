@@ -64,6 +64,11 @@ Telegram token yokken `MockTelegramNotifier` kullanılır. Gerçek entegrasyon e
 production/live doğrulamada kullanılamaz. Dry-run, cache, survivorship bias ve frozen dataset
 iş akışı için [docs/free-research-data.md](docs/free-research-data.md) belgesine bakın.
 
+Operasyonel araştırma evreni sabit BIST 100 yerine Borsa İstanbul'un yönlendirdiği
+güncel KAP pazar sicilinden oluşturulur. Pay dışı araçlar pazar metadata'sıyla ayrılır;
+Yahoo eşlemesi exact ve fail-closed'dur. Dry-run, günlük refresh ve kapsam metrikleri için
+[docs/dynamic-universe.md](docs/dynamic-universe.md) belgesine bakın.
+
 ## Demo ve test
 
 Deterministik `rally`, `flat`, `selloff`, `bad_data` ve `xu100` fixture'ları bulunur. `make check` format, Ruff, mypy, pytest ve coverage kapısını çalıştırır. Backtest sinyali kapanış `t` ile hesaplar ve girişi `t+1` açılışında yapar. Evren geçmişi sağlanmadan survivorship-bias ortadan kaldırılamaz; raporlarda bu kısıt belirtilmelidir. Split/temettü ayarı provider metadata'sıyla doğrulanmalıdır.

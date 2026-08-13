@@ -12,6 +12,7 @@ __pycache__/
 bist_radar.db
 postgres_data/
 frontend/node_modules/
+frontend/.vite-cache/
 frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.js

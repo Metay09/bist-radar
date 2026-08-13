@@ -23,9 +23,15 @@ class IntradayRepository:
         self.session_factory = session_factory
 
     def save_signal(
-        self, snapshot: IntradaySnapshot, cooldown_minutes: int, upgrade_points: int
+        self,
+        snapshot: IntradaySnapshot,
+        cooldown_minutes: int,
+        upgrade_points: int,
+        plan_snapshot: dict[str, object] | None = None,
     ) -> str:
         with self.session_factory() as session:
+            if cooldown_minutes < 0 and session.get(MlFeatureSnapshotRow, snapshot.signal_id):
+                return "REJECTED_DUPLICATE"
             previous = session.scalar(
                 select(MlFeatureSnapshotRow)
                 .where(
@@ -39,12 +45,19 @@ class IntradayRepository:
             )
             if previous is not None:
                 old_score = int(previous.features.get("radar_score", 0))
-                return (
+                disposition = (
                     "SIGNAL_UPGRADED"
                     if snapshot.radar_score >= old_score + upgrade_points
                     else "REJECTED_COOLDOWN"
                 )
+                if disposition == "REJECTED_COOLDOWN":
+                    return disposition
+            else:
+                disposition = "SIGNAL_CREATED"
             try:
+                features = snapshot.payload()
+                if plan_snapshot is not None:
+                    features["trade_plan_snapshot"] = plan_snapshot
                 session.add(
                     MlFeatureSnapshotRow(
                         signal_id=snapshot.signal_id,
@@ -53,14 +66,14 @@ class IntradayRepository:
                         signal_time=snapshot.timestamp,
                         lifecycle="OUTCOME_PENDING",
                         feature_schema_version=snapshot.feature_schema_version,
-                        features=jsonable(snapshot.payload()),
+                        features=jsonable(features),
                     )
                 )
                 session.commit()
             except IntegrityError:
                 session.rollback()
                 return "REJECTED_DUPLICATE"
-        return "SIGNAL_CREATED"
+        return disposition
 
     def signals(self, symbol: str | None = None) -> list[dict[str, object]]:
         with self.session_factory() as session:
@@ -104,6 +117,40 @@ class IntradayRepository:
                 features = {} if signal is None else dict(signal.features)
                 output.append(features | dict(row.outcome) | {"signal_id": row.signal_id})
             return output
+
+    def outcome_summaries(self) -> list[dict[str, object]]:
+        """Return one user-facing record per signal without collapsing pending horizons."""
+        summaries: dict[str, dict[str, object]] = {}
+        excluded = {
+            "horizon",
+            "status",
+            "forward_return",
+            "maximum_favorable_excursion",
+            "maximum_adverse_excursion",
+            "hit_plus_1_percent",
+            "hit_plus_2_percent",
+            "hit_plus_3_percent",
+            "hit_plus_5_percent",
+            "hit_stop_first",
+        }
+        for row in self.outcomes():
+            signal_id = str(row["signal_id"])
+            summary = summaries.setdefault(
+                signal_id, {key: value for key, value in row.items() if key not in excluded}
+            )
+            horizon = str(row.get("horizon", "")).lower()
+            if row.get("status") == "LABEL_AVAILABLE":
+                summary[f"forward_return_{horizon}"] = row.get("forward_return")
+                for key in ("maximum_favorable_excursion", "maximum_adverse_excursion"):
+                    value = row.get(key)
+                    current = summary.get(key)
+                    if isinstance(value, (int, float)) and (
+                        not isinstance(current, (int, float))
+                        or (key == "maximum_favorable_excursion" and value > current)
+                        or (key == "maximum_adverse_excursion" and value < current)
+                    ):
+                        summary[key] = value
+        return list(summaries.values())
 
     def models(self) -> list[dict[str, object]]:
         with self.session_factory() as session:

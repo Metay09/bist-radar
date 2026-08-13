@@ -38,7 +38,7 @@ def service_fixture() -> tuple[IntradayResearchService, IntradayRepository]:
 
 def test_scan_and_restart_outcome_tracking() -> None:
     service, repository = service_fixture()
-    now = datetime(2026, 1, 2, 4, tzinfo=UTC)
+    now = datetime(2026, 1, 2, 3, 15, tzinfo=UTC)
     result = service.run(now)
     assert result["evaluated_symbols"] == 1
     assert result["candidates"]
@@ -50,6 +50,13 @@ def test_scan_and_restart_outcome_tracking() -> None:
         ResearchRepository(repository.session_factory),
     )
     assert restarted.update_outcomes(now + timedelta(hours=4)) == 1
+
+
+def test_stale_symbol_is_audited_and_not_scored() -> None:
+    service, _ = service_fixture()
+    result = service.run(datetime(2026, 1, 2, 8, tzinfo=UTC))
+    assert result["candidates"] == []
+    assert result["stage_a_rejections"] == {"STALE": 1}
 
 
 def test_empty_service_and_safe_failure(monkeypatch: object) -> None:

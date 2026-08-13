@@ -75,16 +75,40 @@ class ResearchRepository:
                             metrics=jsonable(quality),
                         )
                     )
-                for bar in bars:
-                    exists = session.scalar(
-                        select(MarketBarRow.id).where(
-                            MarketBarRow.provider_id == bar.provider,
-                            MarketBarRow.symbol == bar.symbol,
-                            MarketBarRow.timeframe == bar.timeframe.value,
-                            MarketBarRow.timestamp == bar.timestamp,
-                        )
+                symbols = sorted({bar.symbol for bar in bars})
+                start = min(bar.timestamp for bar in bars)
+                end = max(bar.timestamp for bar in bars)
+                stored_identities = session.execute(
+                    select(
+                        MarketBarRow.provider_id,
+                        MarketBarRow.symbol,
+                        MarketBarRow.timeframe,
+                        MarketBarRow.timestamp,
+                    ).where(
+                        MarketBarRow.provider_id == bars[0].provider,
+                        MarketBarRow.timeframe == bars[0].timeframe.value,
+                        MarketBarRow.symbol.in_(symbols),
+                        MarketBarRow.timestamp >= start,
+                        MarketBarRow.timestamp <= end,
                     )
-                    if exists:
+                ).all()
+                existing = {
+                    (
+                        provider_id,
+                        symbol,
+                        timeframe,
+                        timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp,
+                    )
+                    for provider_id, symbol, timeframe, timestamp in stored_identities
+                }
+                for bar in bars:
+                    identity = (
+                        bar.provider,
+                        bar.symbol,
+                        bar.timeframe.value,
+                        bar.timestamp,
+                    )
+                    if identity in existing:
                         duplicates += 1
                         continue
                     session.add(
@@ -105,6 +129,7 @@ class ResearchRepository:
                             quality_flags=[flag.value for flag in bar.quality_flags],
                         )
                     )
+                    existing.add(identity)
                     inserted += 1
         return dataset_id, inserted, duplicates
 

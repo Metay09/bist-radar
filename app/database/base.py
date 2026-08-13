@@ -29,6 +29,49 @@ class SymbolRow(Base):
     active: Mapped[bool] = mapped_column(default=True)
 
 
+class UniverseSnapshotRow(Base):
+    __tablename__ = "universe_snapshots"
+    snapshot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(200))
+    source_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    instrument_count: Mapped[int] = mapped_column(Integer)
+    equity_count: Mapped[int] = mapped_column(Integer)
+
+
+class UniverseSymbolRow(Base):
+    __tablename__ = "universe_symbols"
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    canonical_symbol: Mapped[str] = mapped_column(String(16), unique=True)
+    company_name: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    market: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    instrument_type: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(200))
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    active: Mapped[bool] = mapped_column(index=True)
+    provider_symbol: Mapped[str | None] = mapped_column(String(24), nullable=True, unique=True)
+    provider_status: Mapped[str] = mapped_column(String(40), index=True)
+    validation_status: Mapped[str] = mapped_column(String(40), index=True)
+    latest_provider_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_probed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UniverseMembershipRow(Base):
+    __tablename__ = "universe_memberships"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    market: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    event: Mapped[str] = mapped_column(String(30))
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "symbol", name="uq_universe_snapshot_symbol"),
+    )
+
+
 class MarketBarRow(Base):
     __tablename__ = "market_bars"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

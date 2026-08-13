@@ -41,6 +41,7 @@ from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
 from app.paper.repository import PaperTradeRepository
+from app.universe.service import UniverseRepository
 
 
 @asynccontextmanager
@@ -58,6 +59,7 @@ paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
 research_repository = ResearchRepository()
 intraday_repository = IntradayRepository()
+universe_repository = UniverseRepository()
 
 
 class ReplayRequest(BaseModel):
@@ -135,6 +137,41 @@ def ready() -> dict[str, bool]:
 @app.get("/symbols")
 def symbols() -> list[str]:
     return service.symbols
+
+
+@app.get("/universe")
+def universe() -> list[str]:
+    return universe_repository.active_symbols()
+
+
+@app.get("/universe/summary")
+def universe_summary() -> dict[str, object]:
+    return universe_repository.summary(settings.intraday_stale_minutes)
+
+
+@app.get("/universe/failures")
+def universe_failures() -> list[dict[str, object]]:
+    from app.database.base import UniverseSymbolRow
+
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(UniverseSymbolRow)
+            .where(
+                UniverseSymbolRow.active.is_(True),
+                UniverseSymbolRow.provider_status != "AVAILABLE",
+            )
+            .order_by(UniverseSymbolRow.symbol)
+        ).all()
+        return [
+            {
+                "symbol": row.symbol,
+                "provider_symbol": row.provider_symbol,
+                "status": row.provider_status,
+                "validation_status": row.validation_status,
+                "last_probed_at": row.last_probed_at,
+            }
+            for row in rows
+        ]
 
 
 @app.get("/radar")
@@ -342,12 +379,16 @@ def intraday_scan_symbol(symbol: str) -> dict[str, object]:
 
 @app.get("/signals/outcomes")
 def signal_outcomes() -> list[dict[str, object]]:
-    return intraday_repository.outcomes()
+    return intraday_repository.outcome_summaries()
 
 
 @app.get("/analytics/signal-accuracy")
-def signal_accuracy(group: str = "score") -> list[dict[str, object]]:
-    return accuracy_buckets(intraday_repository.outcomes(), group)
+def signal_accuracy(group: str = "score", horizon: str = "120m") -> list[dict[str, object]]:
+    allowed = {"15m", "30m", "60m", "120m", "EOD", "NEXT_DAY"}
+    if horizon not in allowed:
+        raise HTTPException(422, "invalid outcome horizon")
+    rows = [row for row in intraday_repository.outcomes() if row.get("horizon") == horizon]
+    return accuracy_buckets(rows, group)
 
 
 @app.get("/ml/status")

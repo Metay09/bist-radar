@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     research_cache_ttl_hours: int = 24
     research_download_attempts: int = 3
     research_batch_size: int = 25
+    intraday_provider_batch_size: int = 25
+    intraday_provider_max_concurrency: int = 1
+    intraday_provider_retry_limit: int = 2
     min_warmup_bars: int = 200
     min_avg_daily_value_traded: float = 0
     min_avg_daily_volume: float = 0

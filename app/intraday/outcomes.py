@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time
 from enum import StrEnum
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -11,7 +12,9 @@ class LabelStatus(StrEnum):
     LABEL_UNAVAILABLE = "LABEL_UNAVAILABLE"
 
 
-HORIZONS = {"15m": 15, "30m": 30, "60m": 60, "120m": 120}
+HORIZONS = {"15m": 1, "30m": 2, "60m": 4, "120m": 8}
+ISTANBUL = ZoneInfo("Europe/Istanbul")
+SESSION_CLOSE = time(18, 0)
 
 
 def _number(value: object) -> float:
@@ -76,33 +79,45 @@ def label_signal(
     # A live tracker must never label from bars that exist in a preloaded frame but
     # are still in the simulation future.
     future_all = bars.loc[(bars.index > signal_time) & (bars.index <= now)]
-    for name, minutes in HORIZONS.items():
-        deadline = signal_time + timedelta(minutes=minutes)
-        future = future_all.loc[future_all.index <= deadline]
-        if now < deadline:
-            result[name] = HorizonOutcome(name, LabelStatus.LABEL_PENDING)
-        elif future.empty:
+    for name, bar_count in HORIZONS.items():
+        future = future_all.iloc[:bar_count]
+        if len(future) < bar_count:
             status = (
                 LabelStatus.LABEL_UNAVAILABLE if dataset_complete else LabelStatus.LABEL_PENDING
             )
             result[name] = HorizonOutcome(name, status)
         else:
             result[name] = _outcome(name, price, future, stop)
-    signal_day = signal_time.date()
+    signal_day = signal_time.astimezone(ISTANBUL).date()
     if future_all.empty:
         eod = later_days = future_all
     else:
         if not isinstance(future_all.index, pd.DatetimeIndex):
             raise ValueError("datetime bar index required")
-        eod = future_all.loc[future_all.index.date == signal_day]
-        later_days = future_all.loc[future_all.index.date > signal_day]
+        local_dates = future_all.index.tz_convert(ISTANBUL).date
+        eod = future_all.loc[local_dates == signal_day]
+        later_days = future_all.loc[local_dates > signal_day]
     next_day = (
-        later_days.loc[later_days.index.date == later_days.index.date.min()]
+        later_days.loc[
+            later_days.index.tz_convert(ISTANBUL).date
+            == later_days.index.tz_convert(ISTANBUL).date.min()
+        ]
         if not later_days.empty
         else later_days
     )
+    now_local = now.astimezone(ISTANBUL)
+    next_day_date = next_day.index[0].tz_convert(ISTANBUL).date() if not next_day.empty else None
+    mature = {
+        "EOD": now_local.date() > signal_day
+        or (now_local.date() == signal_day and now_local.time() >= SESSION_CLOSE),
+        "NEXT_DAY": next_day_date is not None
+        and (
+            now_local.date() > next_day_date
+            or (now_local.date() == next_day_date and now_local.time() >= SESSION_CLOSE)
+        ),
+    }
     for name, future in (("EOD", eod), ("NEXT_DAY", next_day)):
-        if future.empty:
+        if future.empty or not mature[name]:
             status = (
                 LabelStatus.LABEL_UNAVAILABLE if dataset_complete else LabelStatus.LABEL_PENDING
             )

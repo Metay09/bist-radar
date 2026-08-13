@@ -40,3 +40,9 @@ def test_worker_dispatches_valid_candidates_and_skips_invalid(monkeypatch) -> No
     )
     assert len(calls) == 1
     assert worker.dispatch_report_alerts({"candidates": "bad"}, now) == 0
+
+
+def test_universe_refresh_is_scheduled_before_market() -> None:
+    afternoon = datetime(2026, 8, 13, 12, tzinfo=UTC)
+    result = worker.next_universe_refresh_at(afternoon)
+    assert result == datetime(2026, 8, 14, 5, 30, tzinfo=UTC)

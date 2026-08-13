@@ -14,6 +14,23 @@ FEATURE_SCHEMA_VERSION = "intraday-v1"
 STRATEGY_ID = "radar-intraday-v1"
 
 
+def stage_a_eligible(frame: pd.DataFrame, minimum_history: int = 50) -> tuple[bool, str]:
+    """Cheap quality screen; activity spikes are retained to avoid missing early movers."""
+    if len(frame) < minimum_history:
+        return False, "LIMITED_HISTORY"
+    recent = frame.tail(20)
+    nonzero_ratio = float((recent.volume > 0).mean())
+    if nonzero_ratio < 0.8:
+        positive_history = recent.volume.iloc[:-1][recent.volume.iloc[:-1] > 0]
+        previous = float(positive_history.median()) if not positive_history.empty else 0.0
+        spike = previous > 0 and float(recent.volume.iloc[-1]) >= previous * 3
+        acceleration = abs(float(recent.close.pct_change().iloc[-1])) >= 0.02
+        if not (spike and acceleration):
+            return False, "LIQUIDITY_FILTER"
+        return True, "EARLY_MOVER_OVERRIDE"
+    return True, "ELIGIBLE"
+
+
 class SignalLifecycle(StrEnum):
     SIGNAL_CREATED = "SIGNAL_CREATED"
     OUTCOME_PENDING = "OUTCOME_PENDING"

@@ -14,6 +14,7 @@ from app.data.research import ResearchCache, completed_daily_bars, load_universe
 from app.data.research_repository import ResearchRepository
 from app.data.yfinance_provider import YFinanceResearchProvider
 from app.intraday.service import IntradayResearchService
+from app.universe.service import KapMarketUniverseSource
 
 
 def download_research(start: date, end: date) -> tuple[list[CanonicalBar], dict[str, object]]:
@@ -93,6 +94,7 @@ def main() -> None:
             "research-replay",
             "intraday-download",
             "intraday-scan",
+            "universe-discover",
         ),
     )
     parser.add_argument("--years", type=int, default=3)
@@ -102,6 +104,30 @@ def main() -> None:
     parser.add_argument("--timeframe", choices=("5m", "15m", "30m", "60m"), default="15m")
     args = parser.parse_args()
     repository = ResearchRepository()
+    if args.command == "universe-discover":
+        discovery = KapMarketUniverseSource().fetch()
+        excluded: dict[str, int] = {}
+        for item in discovery.instruments:
+            if not item.accepted:
+                excluded[item.instrument_type] = excluded.get(item.instrument_type, 0) + 1
+        print(
+            json.dumps(
+                {
+                    "dry_run": True,
+                    "source": "Borsa İstanbul linked KAP market registry",
+                    "source_timestamp": discovery.source_timestamp,
+                    "discovered_instruments": len(discovery.instruments),
+                    "equity_accepted": len(discovery.equities),
+                    "excluded_by_type": excluded,
+                    "duplicate_mappings": len(discovery.equities)
+                    - len({x.symbol for x in discovery.equities}),
+                    "snapshot_hash": discovery.snapshot_id,
+                },
+                default=str,
+                sort_keys=True,
+            )
+        )
+        return
     if args.command == "intraday-download":
         settings = get_settings()
         universe = load_universe(Path("config/universes/bist100.csv"))

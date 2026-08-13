@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
+import pytest
 
 from app.intraday.outcomes import LabelStatus, accuracy_buckets, label_signal, lifecycle
 
@@ -37,6 +38,37 @@ def test_pending_partial_and_all_intraday_horizons() -> None:
     assert complete["EOD"].status == LabelStatus.LABEL_AVAILABLE
     assert complete["NEXT_DAY"].status == LabelStatus.LABEL_UNAVAILABLE
     assert lifecycle(complete) == "FULLY_LABELED"
+
+
+def test_horizons_count_completed_bars_across_session_gap_and_eod_waits_for_close() -> None:
+    signal = datetime(2026, 1, 5, 14, 45, tzinfo=UTC)  # 17:45 Istanbul
+    index = pd.DatetimeIndex(
+        [
+            datetime(2026, 1, 6, 7, 0, tzinfo=UTC),
+            datetime(2026, 1, 6, 7, 15, tzinfo=UTC),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100, 101],
+            "high": [102, 103],
+            "low": [99, 100],
+            "close": [101, 102],
+            "volume": [1, 1],
+        },
+        index=index,
+    )
+    result = label_signal(signal, 100, data, datetime(2026, 1, 6, 7, 31, tzinfo=UTC))
+    assert result["15m"].forward_return == pytest.approx(0.01)
+    assert result["30m"].forward_return == pytest.approx(0.02)
+    assert result["60m"].status == LabelStatus.LABEL_PENDING
+    assert result["NEXT_DAY"].status == LabelStatus.LABEL_PENDING
+
+
+def test_eod_is_not_labeled_from_an_intraday_close() -> None:
+    signal = datetime(2026, 1, 5, 7, 0, tzinfo=UTC)
+    result = label_signal(signal, 100, bars(signal, 2), signal + timedelta(minutes=45))
+    assert result["EOD"].status == LabelStatus.LABEL_PENDING
 
 
 def test_stop_first_is_conservative() -> None:

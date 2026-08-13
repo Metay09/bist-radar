@@ -1,10 +1,10 @@
 import logging
 import time
 from datetime import UTC, datetime, timedelta
+from datetime import time as clock_time
 from zoneinfo import ZoneInfo
 
 from app.api.dashboard import market_open
-from app.api.service import service
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.database.base import EventRow, SessionLocal
@@ -12,6 +12,16 @@ from app.intraday.ingestion import IntradayDataUpdater
 from app.intraday.service import safe_intraday_cycle
 from app.notifications.alerts import AlertCandidate, AlertDispatcher, TelegramClient
 from app.operations.jobs import job_lock, mark_job
+from app.universe.service import KapMarketUniverseSource, UniverseRepository
+
+
+def next_universe_refresh_at(now: datetime) -> datetime:
+    """Return the next 08:30 Istanbul off-market refresh boundary."""
+    local = now.astimezone(ZoneInfo("Europe/Istanbul"))
+    candidate = datetime.combine(local.date(), clock_time(8, 30), tzinfo=local.tzinfo)
+    if candidate <= local:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(UTC)
 
 
 def dispatch_report_alerts(report: dict[str, object], now: datetime) -> int:
@@ -57,6 +67,7 @@ def run() -> None:
     configure_logging()
     log = logging.getLogger(__name__)
     next_scan = datetime.min.replace(tzinfo=UTC)
+    next_universe_refresh = datetime.min.replace(tzinfo=UTC)
     while True:
         now = datetime.now(UTC)
         if now >= next_scan:
@@ -64,15 +75,26 @@ def run() -> None:
                 if acquired:
                     try:
                         log.info("market_scan_started")
-                        results = service.scan()
-                        with SessionLocal.begin() as session:
-                            session.add(
-                                EventRow(
-                                    event="market_scan_finished",
-                                    created_at=now,
-                                    detail={"count": len(results)},
+                        if now >= next_universe_refresh:
+                            try:
+                                discovery = KapMarketUniverseSource().fetch()
+                                refresh = UniverseRepository().save(discovery)
+                                refresh_detail: dict[str, object] = dict(refresh)
+                                mark_job("universe_refresh", True, refresh_detail)
+                                next_universe_refresh = next_universe_refresh_at(now)
+                            except Exception as universe_exc:
+                                mark_job(
+                                    "universe_refresh",
+                                    False,
+                                    {"reason": type(universe_exc).__name__},
                                 )
-                            )
+                                next_universe_refresh = min(
+                                    now + timedelta(hours=1), next_universe_refresh_at(now)
+                                )
+                                log.warning(
+                                    "universe_refresh_failed error=%s; retaining prior snapshot",
+                                    type(universe_exc).__name__,
+                                )
                         try:
                             update = IntradayDataUpdater().run(now)
                         except Exception as provider_exc:
@@ -93,6 +115,9 @@ def run() -> None:
                                 "inserted_bars": update.inserted_bars,
                                 "duplicate_bars": update.duplicate_bars,
                                 "failures": update.failures,
+                                "provider_seconds": update.provider_seconds,
+                                "persistence_seconds": update.persistence_seconds,
+                                "total_seconds": update.total_seconds,
                                 "reason": update.reason,
                                 "latest_provider_bar": (
                                     update.latest_provider_bar.isoformat()
@@ -114,6 +139,8 @@ def run() -> None:
                             raise RuntimeError("INTRADAY_SCAN_FAILED")
                         report_stamp = report.get("data_timestamp")
                         report_candidates = report.get("candidates", [])
+                        evaluated_value = report.get("evaluated_symbols", 0)
+                        evaluated = evaluated_value if isinstance(evaluated_value, int) else 0
                         mark_job(
                             "intraday_radar_scan",
                             True,
@@ -128,15 +155,24 @@ def run() -> None:
                         )
                         if report:
                             dispatch_report_alerts(report, now)
-                        mark_job("autonomous_market_scan", True, {"count": len(results)})
-                        log.info("market_scan_finished count=%d", len(results))
+                        with SessionLocal.begin() as session:
+                            session.add(
+                                EventRow(
+                                    event="market_scan_finished",
+                                    created_at=now,
+                                    detail={"evaluated_symbols": evaluated},
+                                )
+                            )
+                        mark_job("autonomous_market_scan", True, {"evaluated_symbols": evaluated})
+                        log.info("market_scan_finished evaluated_symbols=%d", evaluated)
                     except Exception as exc:
                         mark_job("autonomous_market_scan", False, {"error": type(exc).__name__})
                         log.warning("autonomous_cycle_failed error=%s", type(exc).__name__)
             # Provider-friendly: run after a 15m boundary plus a small availability buffer.
-            local = now.astimezone(ZoneInfo("Europe/Istanbul"))
+            completed_at = datetime.now(UTC)
+            local = completed_at.astimezone(ZoneInfo("Europe/Istanbul"))
             minutes = 15 - (local.minute % 15)
-            next_scan = now + timedelta(minutes=minutes, seconds=30 - local.second)
+            next_scan = completed_at + timedelta(minutes=minutes, seconds=30 - local.second)
         time.sleep(30)
 
 

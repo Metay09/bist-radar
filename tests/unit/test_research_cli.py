@@ -95,3 +95,29 @@ def test_cli_download_scan_and_replay_commands(monkeypatch: object, capsys: obje
     cli.main()
     assert json.loads(capture.readouterr().out)["trades"] == 0
     assert saved == ["scan", "replay"]
+
+
+def test_universe_discovery_cli_is_dry_run(monkeypatch: object, capsys: object) -> None:
+    from pytest import CaptureFixture, MonkeyPatch
+
+    patch = monkeypatch
+    capture = capsys
+    assert isinstance(patch, MonkeyPatch) and isinstance(capture, CaptureFixture)
+    items = (
+        SimpleNamespace(symbol="ASELS", accepted=True, instrument_type="EQUITY"),
+        SimpleNamespace(symbol="FUNDX", accepted=False, instrument_type="FUND"),
+    )
+    discovery = SimpleNamespace(
+        instruments=items,
+        equities=(items[0],),
+        source_timestamp=datetime(2026, 8, 13, tzinfo=UTC),
+        snapshot_id="a" * 64,
+    )
+    patch.setattr(cli.KapMarketUniverseSource, "fetch", lambda self: discovery)
+    patch.setattr(sys, "argv", ["app.cli", "universe-discover", "--dry-run"])
+    cli.main()
+    report = json.loads(capture.readouterr().out)
+    assert report["dry_run"] is True
+    assert report["equity_accepted"] == 1
+    assert report["excluded_by_type"] == {"FUND": 1}
+    assert report["duplicate_mappings"] == 0

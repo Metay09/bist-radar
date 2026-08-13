@@ -57,9 +57,10 @@ def test_signal_cooldown_upgrade_and_immutability(repository: IntradayRepository
         repository.save_signal(snapshot(stamp + timedelta(minutes=15), 84), 60, 5)
         == "SIGNAL_UPGRADED"
     )
-    stored = repository.signals()[0]
-    assert stored["radar_score"] == 75
-    assert len(repository.signals()) == 1
+    stored = repository.signals()
+    assert len(stored) == 2
+    assert stored[0]["radar_score"] == 84
+    assert stored[1]["radar_score"] == 75
     assert repository.save_signal(snapshot(stamp), -1, 5) == "REJECTED_DUPLICATE"
 
 
@@ -77,6 +78,9 @@ def test_outcome_persistence_update_and_restart(repository: IntradayRepository) 
         {"15m": HorizonOutcome("15m", LabelStatus.LABEL_AVAILABLE, forward_return=0.01)},
     )
     assert restarted.outcomes()[0]["forward_return"] == 0.01
+    summary = restarted.outcome_summaries()[0]
+    assert summary["forward_return_15m"] == 0.01
+    assert summary.get("maximum_favorable_excursion") is None
     assert restarted.status()["fully_labeled"] == 1
     with pytest.raises(ValueError, match="unknown signal"):
         restarted.save_outcomes("missing", {})
