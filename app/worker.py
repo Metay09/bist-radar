@@ -8,6 +8,7 @@ from app.api.service import service
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.database.base import EventRow, SessionLocal
+from app.intraday.ingestion import IntradayDataUpdater
 from app.intraday.service import safe_intraday_cycle
 from app.notifications.alerts import AlertCandidate, AlertDispatcher, TelegramClient
 from app.operations.jobs import job_lock, mark_job
@@ -72,7 +73,59 @@ def run() -> None:
                                     detail={"count": len(results)},
                                 )
                             )
+                        try:
+                            update = IntradayDataUpdater().run(now)
+                        except Exception as provider_exc:
+                            mark_job(
+                                "intraday_data_update",
+                                False,
+                                {"reason": type(provider_exc).__name__},
+                            )
+                            raise
+                        mark_job(
+                            "intraday_data_update",
+                            update.provider_success,
+                            {
+                                "requested_symbols": update.requested_symbols,
+                                "found_symbols": update.found_symbols,
+                                "downloaded_bars": update.downloaded_bars,
+                                "completed_bars": update.completed_bars,
+                                "inserted_bars": update.inserted_bars,
+                                "duplicate_bars": update.duplicate_bars,
+                                "failures": update.failures,
+                                "reason": update.reason,
+                                "latest_provider_bar": (
+                                    update.latest_provider_bar.isoformat()
+                                    if update.latest_provider_bar
+                                    else None
+                                ),
+                                "latest_persisted_bar": (
+                                    update.latest_persisted_bar.isoformat()
+                                    if update.latest_persisted_bar
+                                    else None
+                                ),
+                            },
+                            update.latest_persisted_bar,
+                        )
+                        if not update.provider_success and market_open(now):
+                            raise RuntimeError(update.reason or "INTRADAY_DATA_UPDATE_FAILED")
                         report = safe_intraday_cycle()
+                        if report is None:
+                            raise RuntimeError("INTRADAY_SCAN_FAILED")
+                        report_stamp = report.get("data_timestamp")
+                        report_candidates = report.get("candidates", [])
+                        mark_job(
+                            "intraday_radar_scan",
+                            True,
+                            {
+                                "candidates": (
+                                    len(report_candidates)
+                                    if isinstance(report_candidates, list)
+                                    else 0
+                                )
+                            },
+                            report_stamp if isinstance(report_stamp, datetime) else None,
+                        )
                         if report:
                             dispatch_report_alerts(report, now)
                         mark_job("autonomous_market_scan", True, {"count": len(results)})

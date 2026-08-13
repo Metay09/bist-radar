@@ -60,16 +60,23 @@ def dashboard_summary() -> dict[str, object]:
         if isinstance(row, dict) and row.get("classification") in counts:
             counts[str(row["classification"])] += 1
     ml = IntradayRepository().status()
+    with SessionLocal() as session:
+        data_job = session.get(WorkerStateRow, "intraday_data_update")
+        scan_job = session.get(WorkerStateRow, "intraday_radar_scan")
     return {
         "provider": "Yahoo Finance via yfinance",
-        "provider_health": "RESEARCH_ONLY",
+        "provider_health": (
+            "RESEARCH_ONLY" if data_job is None or data_job.status == "HEALTHY" else "DEGRADED"
+        ),
         "paper_mode": True,
         "research_only": True,
         "market_open": market_open(),
         "data_timestamp": timestamp,
         "freshness": freshness(timestamp),
         "counts": counts | {"PENDING_OUTCOMES": ml["pending"]},
-        "last_scan": report.get("data_timestamp"),
+        "last_data_update": data_job.last_success_at if data_job else None,
+        "last_provider_attempt": data_job.last_started_at if data_job else None,
+        "last_scan": scan_job.last_success_at if scan_job else None,
     }
 
 

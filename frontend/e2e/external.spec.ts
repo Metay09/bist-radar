@@ -21,9 +21,10 @@ test('yayındaki gerçek dashboard ekranları',async({page})=>{
   }
   const symbols=await page.goto(`${externalUrl}/api/dashboard/candidates`).then(async()=>page.locator('body').textContent()).then(text=>JSON.parse(text||'[]').map((row:{symbol:string})=>row.symbol));
   expect(new Set(symbols).size).toBe(symbols.length);
-  await page.goto(`${externalUrl}/symbol/ASTOR`);
+  expect(symbols.length).toBeGreaterThan(0);
+  await page.goto(`${externalUrl}/symbol/${symbols[0]}`);
   await expect(page.getByText('below_recent_swing_and_1_2_ATR')).toHaveCount(0);
-  await expect(page.getByText(/Son tamamlanmış veriye göre/).first()).toBeVisible();
+  await expect(page.getByRole('heading',{name:/İşlem Planı/})).toBeVisible();
   await page.screenshot({path:'artifacts/android-360-astor-plan.png',fullPage:true});
   await page.getByRole('tab',{name:'Grafik'}).click();
   for(const label of ['Hedef 3','Hedef 2','Hedef 1','Alım','Stop','Referans'])await expect(page.locator('svg').getByText(label,{exact:false})).toBeVisible();

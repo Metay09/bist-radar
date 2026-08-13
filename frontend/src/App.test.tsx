@@ -29,6 +29,8 @@ describe('dashboard UX',()=>{
   it('renders trade plan warning, sizing, chart and tabs',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/symbol/ASELS']}><App/></MemoryRouter>);
     expect(await screen.findByRole('heading',{name:/İşlem Planı/})).toBeInTheDocument();
+    expect(screen.getByText(/Güncel piyasa verisi alınamadığı için bu işlem planı/)).toBeInTheDocument();
+    expect(screen.getByText('Güncel veri yok — plan uygulanabilir değil')).toBeInTheDocument();
     expect(screen.getByText(/Veri 90 dk eski/)).toBeInTheDocument();expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
     expect(screen.getByRole('tab',{name:'Sinyal Geçmişi'})).toBeInTheDocument();fireEvent.click(screen.getByRole('tab',{name:'Grafik'}));
     expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();

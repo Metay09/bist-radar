@@ -55,6 +55,7 @@ def mark_job(
         if state is None:
             state = WorkerStateRow(job_name=job_name, status="UNKNOWN", detail={})
             session.add(state)
+        state.last_started_at = now
         state.status = "HEALTHY" if success else "DEGRADED"
         state.last_success_at = now if success else state.last_success_at
         state.last_failure_at = now if not success else state.last_failure_at

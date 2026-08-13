@@ -9,6 +9,12 @@ running the same job. Persistent `worker_state`, signal snapshots, outcomes, not
 last processed data support restart recovery. Research failures are bounded and isolated from API
 health; existing bars are not deleted.
 
+The intraday cycle is explicitly ordered: research-provider download, canonical conversion and
+validation, completed-bar filtering, idempotent PostgreSQL persistence, Radar scan, outcome update,
+then notification dispatch. `intraday_data_update` and `intraday_radar_scan` have separate persistent
+checkpoints. While the market is open, an empty or old-only provider response degrades the data
+update and prevents an old-data scan from being reported as successful.
+
 Useful commands:
 
 ```text
