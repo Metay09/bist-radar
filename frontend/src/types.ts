@@ -7,3 +7,5 @@ export type Summary={provider:string;provider_health:string;paper_mode:boolean;r
 export type Signal=Candidate&{signal_id:string;lifecycle:string};
 export type Bar={timestamp:string;open:number;high:number;low:number;close:number;volume:number};
 export type Detail={symbol:string;candidate:Candidate|null;bars:Bar[];progression:Signal[];freshness:Freshness;trade_plan:TradePlan};
+export type Outcome=Record<string,unknown>&{signal_id?:string;symbol?:string;timestamp?:string;price?:number;radar_score?:number;lifecycle?:string;horizon?:string;forward_return?:number;maximum_favorable_excursion?:number;maximum_adverse_excursion?:number};
+export type PaperTrade={trade_id:string;symbol:string;entry_time:string;entry_price:number;position_size:number;stop_price:number;target_1:number;target_2:number;exit_time?:string|null;exit_price?:number|null;exit_reason?:string|null;net_return:number};

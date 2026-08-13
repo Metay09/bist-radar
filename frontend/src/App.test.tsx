@@ -35,12 +35,12 @@ describe('dashboard UX',()=>{
   });
   it('renders signal mobile cards and contextual help',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/signals']}><App/></MemoryRouter>);
-    expect(await screen.findByRole('heading',{name:'Sinyaller'})).toBeInTheDocument();expect(document.querySelector('.signal-card')).toBeInTheDocument();
-    expect(screen.getAllByLabelText(/RVOL:/).length).toBeGreaterThan(0);
+    expect(await screen.findByRole('heading',{name:'Sinyaller'})).toBeInTheDocument();expect(document.querySelector('.history-card')).toBeInTheDocument();
+    expect(screen.getByText(/Sonucu bekleniyor/)).toBeInTheDocument();
   });
   it('shows shadow insufficient data warning',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);
-    expect(await screen.findByText(/Henüz yeterli etiketlenmiş veri yok/)).toBeInTheDocument();expect(screen.getByText(/Radar kararını etkilemez/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/Henüz yeterli sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/Shadow yalnız gözlem yapar/)).toBeInTheDocument();
   });
   it('handles provider failure',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);
