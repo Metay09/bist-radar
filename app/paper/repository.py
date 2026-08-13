@@ -43,9 +43,16 @@ class PaperTradeRepository:
             row.net_return,
         )
 
-    def list(self) -> list[PaperTrade]:
+    def list(
+        self, portfolio_id: str | None = None, strategy_id: str | None = None
+    ) -> list[PaperTrade]:
         with self.session_factory() as session:
-            rows = session.scalars(select(PaperTradeRow).order_by(PaperTradeRow.entry_time)).all()
+            query = select(PaperTradeRow).order_by(PaperTradeRow.entry_time)
+            if portfolio_id is not None:
+                query = query.where(PaperTradeRow.portfolio_id == portfolio_id)
+            if strategy_id is not None:
+                query = query.where(PaperTradeRow.strategy_id == strategy_id)
+            rows = session.scalars(query).all()
             return [self._domain(row) for row in rows]
 
     def open(
@@ -116,5 +123,7 @@ class PaperTradeRepository:
         except SQLAlchemyError as exc:
             raise PaperTradePersistenceError("paper trade transaction failed") from exc
 
-    def performance(self) -> dict[str, float | int]:
-        return PaperLedger.performance_for(self.list())
+    def performance(
+        self, portfolio_id: str | None = None, strategy_id: str | None = None
+    ) -> dict[str, float | int]:
+        return PaperLedger.performance_for(self.list(portfolio_id, strategy_id))

@@ -109,3 +109,12 @@ def test_negative_cost_configuration_rejected() -> None:
     ledger = PaperLedger(Decimal("-1"), Decimal("0"))
     with pytest.raises(ValueError):
         ledger.open("BAD", *values())
+
+
+def test_repository_context_filter_excludes_acceptance_records(
+    repository: PaperTradeRepository,
+) -> None:
+    ledger = PaperLedger()
+    repository.open(ledger, "REAL", *values())
+    assert len(repository.list("paper-default", "radar-v1")) == 1
+    assert repository.list("acceptance-fixture", "acceptance-test") == []

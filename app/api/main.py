@@ -157,12 +157,17 @@ def signals() -> list[dict[str, object]]:
 
 @app.get("/paper/trades")
 def paper_trades() -> list[dict[str, object]]:
-    return [asdict(x) for x in paper_repository.list()]
+    return [
+        asdict(x)
+        for x in paper_repository.list(
+            portfolio_id="paper-default", strategy_id="radar-intraday-v1"
+        )
+    ]
 
 
 @app.get("/paper/performance")
 def paper_performance() -> dict[str, float | int]:
-    return paper_repository.performance()
+    return paper_repository.performance("paper-default", "radar-intraday-v1")
 
 
 @app.get("/system/status")

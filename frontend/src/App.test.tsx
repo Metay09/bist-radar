@@ -29,7 +29,7 @@ describe('dashboard UX',()=>{
   it('renders trade plan warning, sizing, chart and tabs',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/symbol/ASELS']}><App/></MemoryRouter>);
     expect(await screen.findByRole('heading',{name:/İşlem Planı/})).toBeInTheDocument();
-    expect(screen.getByText(/Veri eski: 90 dk/)).toBeInTheDocument();expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
+    expect(screen.getByText(/Veri 90 dk eski/)).toBeInTheDocument();expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
     expect(screen.getByRole('tab',{name:'Sinyal Geçmişi'})).toBeInTheDocument();fireEvent.click(screen.getByRole('tab',{name:'Grafik'}));
     expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();
   });
@@ -40,7 +40,7 @@ describe('dashboard UX',()=>{
   });
   it('shows shadow insufficient data warning',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);
-    expect((await screen.findAllByText(/Henüz yeterli sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/Shadow yalnız gözlem yapar/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/Henüz yeterli sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/Her uygun sinyal/)).toBeInTheDocument();
   });
   it('handles provider failure',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);

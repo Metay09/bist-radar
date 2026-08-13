@@ -80,10 +80,22 @@ def build_research_trade_plan(
         if timestamp
         else None
     )
+    stop_text = {
+        "below_recent_swing_and_1_2_ATR": (
+            "Stop seviyesi son kısa vadeli dip ve 1,2 ATR dikkate alınarak hesaplandı."
+        )
+    }.get(stop_reason, "Stop seviyesi fiyat yapısı ve oynaklık dikkate alınarak hesaplandı.")
+    rvol = float(_decimal(candidate.get("rvol", 0)))
+    breakout_value = float(_decimal(candidate.get("breakout_distance", 0)))
+    breakout_text = (
+        "Fiyat kırılım seviyesinde veya seviyeyi aşmış."
+        if breakout_value <= 0
+        else f"Fiyat kırılım seviyesine %{breakout_value:.2f} uzaklıkta."
+    )
     explanations = [
-        f"Stop: {stop_reason}",
-        f"RVOL {float(_decimal(candidate.get('rvol', 0))):.2f}x",
-        f"Breakout mesafesi %{float(_decimal(candidate.get('breakout_distance', 0))):.2f}",
+        stop_text,
+        f"Hacim normal seviyenin yaklaşık {rvol:.2f} katında.",
+        breakout_text,
     ]
     if _decimal(candidate.get("vwap_distance", 0)) > 0:
         explanations.append("Fiyat VWAP üzerinde.")
@@ -91,7 +103,7 @@ def build_research_trade_plan(
         _decimal(candidate.get("ema9_distance", 0)) > 0
         and _decimal(candidate.get("ema20_distance", 0)) > 0
     ):
-        explanations.append("Kısa dönem EMA bağlamı pozitif.")
+        explanations.append("Kısa vadeli EMA yapısı olumlu.")
     if age_minutes is None or age_minutes > stale_minutes:
         explanations.append("Veri eski; plan yalnız son tamamlanmış araştırma barına dayanır.")
 

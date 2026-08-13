@@ -41,9 +41,10 @@ def freshness(timestamp: datetime | None, stale_minutes: int = 45) -> dict[str, 
 
 def dashboard_summary() -> dict[str, object]:
     report = ResearchRepository().latest_report("intraday_scan") or {}
-    candidates = report.get("candidates", [])
-    if not isinstance(candidates, list):
-        candidates = []
+    report_candidates = report.get("candidates", [])
+    candidates = _unique_candidates(
+        report_candidates if isinstance(report_candidates, list) else []
+    )
     timestamp_value = report.get("data_timestamp")
     timestamp: datetime | None = (
         datetime.fromisoformat(timestamp_value)
@@ -77,10 +78,42 @@ def candidates() -> list[dict[str, object]]:
     rows = report.get("candidates", [])
     if not isinstance(rows, list):
         return []
-    return sorted(
-        [{str(key): value for key, value in row.items()} for row in rows if isinstance(row, dict)],
-        key=lambda row: (-int(row.get("radar_score", 0)), str(row.get("symbol", ""))),
-    )
+    return _unique_candidates(rows)
+
+
+def _candidate_timestamp(row: dict[str, object]) -> datetime:
+    value = row.get("timestamp")
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return datetime.min.replace(tzinfo=UTC)
+
+
+def _unique_candidates(rows: list[object]) -> list[dict[str, object]]:
+    """Keep the newest canonical observation per symbol, then rank deterministically."""
+    newest: dict[str, dict[str, object]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        row = {str(key): value for key, value in raw.items()}
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        row["symbol"] = symbol
+        current = newest.get(symbol)
+        if current is None or _candidate_timestamp(row) > _candidate_timestamp(current):
+            newest[symbol] = row
+
+    def rank(row: dict[str, object]) -> tuple[int, str]:
+        value = row.get("radar_score", 0)
+        score = int(value) if isinstance(value, (int, float, str)) else 0
+        return -score, str(row["symbol"])
+
+    return sorted(newest.values(), key=rank)
 
 
 def trade_plan(symbol: str) -> dict[str, object]:
@@ -101,7 +134,7 @@ def trade_plan(symbol: str) -> dict[str, object]:
             .limit(10)
         ).all()
     settings = get_settings()
-    return build_research_trade_plan(
+    plan = build_research_trade_plan(
         candidate,
         list(reversed(lows)),
         account_equity=Decimal(str(settings.paper_default_account_equity)),
@@ -109,6 +142,8 @@ def trade_plan(symbol: str) -> dict[str, object]:
         max_position_percent=Decimal(str(settings.max_position_percent)),
         stale_minutes=settings.intraday_stale_minutes,
     )
+    plan["market_closed"] = not market_open()
+    return plan
 
 
 def dashboard_trade_plans() -> list[dict[str, object]]:
@@ -168,7 +203,12 @@ def signal_history(limit: int = 100, symbol: str | None = None) -> list[dict[str
 
 def performance_summary() -> dict[str, object]:
     with SessionLocal() as session:
-        trades = session.scalars(select(PaperTradeRow)).all()
+        trades = session.scalars(
+            select(PaperTradeRow).where(
+                PaperTradeRow.portfolio_id == "paper-default",
+                PaperTradeRow.strategy_id == "radar-intraday-v1",
+            )
+        ).all()
     realized = sum((trade.net_return for trade in trades if trade.exit_time), Decimal("0"))
     return {
         "paper_only": True,

@@ -39,3 +39,17 @@ Sinyaller geçmiş sinyallerin 15/30/60/120 dakika, gün sonu, MFE ve MAE sonuç
 oluşmadıysa sıfır uydurulmaz. Portföy açık/kapalı paper işlemleri seviyeleriyle gösterir; MTM fiyatı
 yoksa gerçekleşmemiş kâr/zarar üretilmez. Analiz ekranı ham JSON yerine örneklem sayılı skor kartları
 kullanır.
+
+## Production hygiene ve sunum sınırları
+
+Production paper portföyü yalnız `paper-default` portföyü ile
+`radar-intraday-v1` strateji bağlamını gösterir. Acceptance, fixture ve replay
+kayıtları ayrı context'te tutulur; testler izole veritabanı kullanır. Radar aday
+aggregation'ı canonical sembol başına yalnız en yeni gözlemi seçer ve eşit
+puanlarda sembol sırasıyla deterministik davranır.
+
+Backend enumları audit amacıyla korunur; snake_case ve internal hesaplama
+tanımları kullanıcıya gösterilmez. Piyasa kapalı veya veri eskiyse plan durumu
+“son tamamlanmış veriye göre” bağlamıyla sunulur. Grafik alım bölgesini bant;
+stop, hedefler ve referans fiyatı etiketli seviyeler olarak gösterir. Backend
+EMA/VWAP serisi sağlamadığında arayüz sahte gösterge çizgisi üretmez.

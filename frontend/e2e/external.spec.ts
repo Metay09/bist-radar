@@ -15,8 +15,19 @@ test('yayındaki gerçek dashboard ekranları',async({page})=>{
     await expect(page.locator('.skeleton')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
     await expect(page.locator('pre')).toHaveCount(0);
+    await expect(page.getByText('PERSIST_OPEN')).toHaveCount(0);
+    await expect(page.getByText('PERSIST_CLOSED')).toHaveCount(0);
     await page.screenshot({path:`artifacts/android-360-${name}.png`,fullPage:true});
   }
+  const symbols=await page.goto(`${externalUrl}/api/dashboard/candidates`).then(async()=>page.locator('body').textContent()).then(text=>JSON.parse(text||'[]').map((row:{symbol:string})=>row.symbol));
+  expect(new Set(symbols).size).toBe(symbols.length);
+  await page.goto(`${externalUrl}/symbol/ASTOR`);
+  await expect(page.getByText('below_recent_swing_and_1_2_ATR')).toHaveCount(0);
+  await expect(page.getByText(/Son tamamlanmış veriye göre/).first()).toBeVisible();
+  await page.screenshot({path:'artifacts/android-360-astor-plan.png',fullPage:true});
+  await page.getByRole('tab',{name:'Grafik'}).click();
+  for(const label of ['Hedef 3','Hedef 2','Hedef 1','Alım','Stop','Referans'])await expect(page.locator('svg').getByText(label,{exact:false})).toBeVisible();
+  await page.screenshot({path:'artifacts/android-360-astor-chart.png',fullPage:true});
   await page.setViewportSize({width:1440,height:900});
   await page.goto(externalUrl!);
   await expect(page.locator('.desktop-sidebar')).toBeVisible();

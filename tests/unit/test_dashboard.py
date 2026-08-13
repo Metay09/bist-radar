@@ -92,6 +92,7 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
                 stop_price=Decimal("98"),
                 target_1=Decimal("104"),
                 target_2=Decimal("106"),
+                strategy_id="radar-intraday-v1",
             )
         )
     monkeypatch.setattr(dashboard, "SessionLocal", factory)
@@ -118,3 +119,58 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
     assert dashboard.signal_history(symbol="ASELS")[0]["lifecycle"] == "OUTCOME_PENDING"
     assert dashboard.performance_summary()["open_positions"] == 1
     assert dashboard.system_overview()["worker_jobs"][0]["status"] == "HEALTHY"
+
+
+def test_candidates_are_unique_newest_and_deterministically_ranked(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    older = {"symbol": "ASTOR", "radar_score": 99, "timestamp": "2026-08-13T10:00:00+00:00"}
+    newest = {"symbol": "astor", "radar_score": 80, "timestamp": "2026-08-13T10:15:00+00:00"}
+    same_score = {"symbol": "ASELS", "radar_score": 80, "timestamp": "2026-08-13T10:15:00+00:00"}
+
+    class Reports:
+        def latest_report(self, _: str):
+            return {"candidates": [older, newest, same_score]}
+
+    monkeypatch.setattr(dashboard, "ResearchRepository", Reports)
+    rows = dashboard.candidates()
+    assert [row["symbol"] for row in rows] == ["ASELS", "ASTOR"]
+    assert rows[1]["radar_score"] == 80
+
+
+def test_dashboard_performance_excludes_acceptance_context(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    db = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(db)
+    factory = sessionmaker(bind=db, expire_on_commit=False)
+    stamp = datetime.now(UTC)
+    common = dict(
+        signal_time=stamp,
+        entry_time=stamp,
+        entry_price=Decimal("100"),
+        position_size=Decimal("1"),
+        stop_price=Decimal("98"),
+        target_1=Decimal("104"),
+        target_2=Decimal("106"),
+    )
+    with factory.begin() as session:
+        session.add(
+            PaperTradeRow(
+                trade_id="fixture",
+                symbol="PERSIST_CLOSED",
+                portfolio_id="acceptance-fixture",
+                strategy_id="acceptance-test",
+                net_return=Decimal("196.7001"),
+                **common,
+            )
+        )
+        session.add(
+            PaperTradeRow(
+                trade_id="real",
+                symbol="ASELS",
+                portfolio_id="paper-default",
+                strategy_id="radar-intraday-v1",
+                **common,
+            )
+        )
+    monkeypatch.setattr(dashboard, "SessionLocal", factory)
+    result = dashboard.performance_summary()
+    assert result["trade_count"] == 1
+    assert result["realized_pnl"] == 0
