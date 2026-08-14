@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.data.research_repository import ResearchRepository
 from app.database.base import MarketBarRow, SessionLocal
 from app.intraday.core import completed_frame, scan_symbol, stage_a_eligible
-from app.intraday.outcomes import label_signal
+from app.intraday.outcomes import label_signal, level_audit
 from app.intraday.repository import IntradayRepository
 from app.risk.trade_plan_view import build_research_trade_plan
 from app.universe.service import UniverseRepository
@@ -162,6 +162,15 @@ class IntradayResearchService:
                 stop=stop,
             )
             self.repository.save_outcomes(str(signal["signal_id"]), outcomes)
+            if isinstance(plan, dict):
+                completed = frames[symbol].loc[
+                    frames[symbol].index <= current - timedelta(minutes=15)
+                ]
+                self.repository.save_audit(
+                    str(signal["signal_id"]),
+                    level_audit(pd.Timestamp(signal["timestamp"]).to_pydatetime(), completed, plan),
+                    current,
+                )
             updated += 1
         return updated
 
@@ -172,6 +181,9 @@ def safe_intraday_cycle() -> dict[str, object] | None:
         service = IntradayResearchService()
         report = service.run()
         updated = service.update_outcomes()
+        from app.ml.training import run_shadow_training
+
+        run_shadow_training()
         log.info(
             "intraday_scan_finished candidates=%d outcomes_updated=%d",
             len(report["candidates"]),  # type: ignore[arg-type]

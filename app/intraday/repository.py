@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,6 +14,7 @@ from app.database.base import (
     MlOutcomeRow,
     MlPredictionRow,
     SessionLocal,
+    SignalAuditRow,
 )
 from app.intraday.core import IntradaySnapshot
 from app.intraday.outcomes import HorizonOutcome, lifecycle
@@ -107,6 +109,21 @@ class IntradayRepository:
                 else:
                     row.status, row.outcome = item.status.value, payload
             signal.lifecycle = lifecycle(outcomes)
+
+    def save_audit(self, signal_id: str, audit: Mapping[str, object], now: datetime) -> None:
+        with self.session_factory.begin() as session:
+            row = session.get(SignalAuditRow, signal_id)
+            if row is None:
+                session.add(SignalAuditRow(signal_id=signal_id, updated_at=now, **audit))
+                return
+            # First-hit timestamps are immutable once observed.
+            for field in ("stop_hit_at", "target1_hit_at", "target2_hit_at", "target3_hit_at"):
+                if getattr(row, field) is None and audit.get(field) is not None:
+                    setattr(row, field, audit[field])
+            if row.ordering == "NONE" and audit.get("ordering") != "NONE":
+                row.ordering = str(audit["ordering"])
+            row.result_classification = str(audit["result_classification"])
+            row.updated_at = now
 
     def outcomes(self) -> list[dict[str, object]]:
         with self.session_factory() as session:

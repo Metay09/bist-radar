@@ -2,6 +2,7 @@ import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -16,7 +17,6 @@ from app.api.dashboard import (
 from app.api.dashboard import (
     dashboard_summary,
     dashboard_trade_plans,
-    signal_history,
     symbol_detail,
     system_overview,
     trade_plan,
@@ -35,6 +35,7 @@ from app.data.research_repository import ResearchRepository
 from app.data.vendor_mock import MockVendorA, MockVendorB
 from app.data.yfinance_provider import YFinanceResearchProvider
 from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
+from app.intraday.intelligence import SignalIntelligence
 from app.intraday.outcomes import accuracy_buckets
 from app.intraday.repository import IntradayRepository
 from app.models.domain import SignalClass
@@ -59,6 +60,7 @@ paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
 research_repository = ResearchRepository()
 intraday_repository = IntradayRepository()
+signal_intelligence = SignalIntelligence()
 universe_repository = UniverseRepository()
 
 
@@ -489,8 +491,61 @@ def symbol_detail_endpoint(symbol: str, limit: int = 160) -> dict[str, object]:
 
 
 @app.get("/signals/history")
-def signal_history_endpoint(limit: int = 100, symbol: str | None = None) -> list[dict[str, object]]:
-    return signal_history(limit, symbol)
+def signal_history_endpoint(
+    limit: int = 50,
+    symbol: str | None = None,
+    date: str | None = None,
+    score_bucket: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+) -> list[dict[str, object]]:
+    try:
+        selected_date = datetime.fromisoformat(date).date() if date else None
+    except ValueError as exc:
+        raise HTTPException(422, "invalid date") from exc
+    return signal_intelligence.records(
+        symbol=symbol,
+        day=selected_date,
+        score_bucket=score_bucket,
+        status=status,
+        page=page,
+        page_size=limit,
+    )[0]
+
+
+@app.get("/signals/daily-summary")
+def signal_daily_summary(days: int = 7) -> list[dict[str, object]]:
+    return signal_intelligence.daily(min(max(days, 1), 60))
+
+
+@app.get("/symbols/{symbol}/results")
+def symbol_results(symbol: str) -> list[dict[str, object]]:
+    return signal_intelligence.symbol_results(symbol)
+
+
+@app.get("/symbols/{symbol}/shadow-status")
+def symbol_shadow_status(symbol: str) -> dict[str, object]:
+    return signal_intelligence.shadow_status(symbol)
+
+
+@app.get("/shadow/status")
+def shadow_status() -> dict[str, object]:
+    return signal_intelligence.shadow_status()
+
+
+@app.get("/analytics/scores")
+def score_performance() -> list[dict[str, object]]:
+    return signal_intelligence.analytics("score")
+
+
+@app.get("/analytics/rvol")
+def rvol_performance() -> list[dict[str, object]]:
+    return signal_intelligence.analytics("rvol")
+
+
+@app.get("/analytics/momentum")
+def momentum_performance() -> list[dict[str, object]]:
+    return signal_intelligence.analytics("momentum")
 
 
 @app.get("/performance/summary")

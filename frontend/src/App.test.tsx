@@ -58,7 +58,7 @@ describe('dashboard UX',()=>{
   });
   it('shows shadow insufficient data warning',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');render(<MemoryRouter initialEntries={['/analysis']}><App/></MemoryRouter>);
-    expect((await screen.findAllByText(/Henüz tüm takip ufukları sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/her sinyali yalnız bir kez/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/Henüz tüm takip ufukları sonuçlanmış sinyal yok/)).length).toBeGreaterThan(0);expect(screen.getByText(/synthetic production veri yoktur/)).toBeInTheDocument();
   });
   it('handles provider failure',async()=>{
     localStorage.setItem('bist-radar-tour-seen','1');vi.stubGlobal('fetch',vi.fn(()=>Promise.resolve({ok:false,status:503})));render(<MemoryRouter><App/></MemoryRouter>);

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     intraday_stale_minutes: int = 45
     ml_mode: Literal["shadow"] = "shadow"
     allow_ml_to_change_radar: bool = False
+    ml_training_threshold: int = 200
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)

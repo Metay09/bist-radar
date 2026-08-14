@@ -138,6 +138,60 @@ def lifecycle(outcomes: dict[str, HorizonOutcome]) -> str:
     return "OUTCOME_PENDING"
 
 
+def level_audit(
+    signal_time: datetime, bars: pd.DataFrame, plan: dict[str, object]
+) -> dict[str, datetime | str | None]:
+    """Find first completed-bar touches. A same-bar stop/target ambiguity is STOP_FIRST."""
+    future = bars.loc[bars.index > signal_time]
+    stop = plan.get("stop_price")
+    raw_targets = plan.get("targets")
+    targets = raw_targets if isinstance(raw_targets, list) else []
+    levels: list[float | None] = [
+        float(stop) if isinstance(stop, (int, float)) else None,
+        *[
+            float(item["price"])
+            if isinstance(item, dict) and isinstance(item.get("price"), (int, float))
+            else None
+            for item in targets[:3]
+        ],
+    ]
+    levels += [None] * (4 - len(levels))
+    hits: list[datetime | None] = [None, None, None, None]
+    for stamp, row in future.iterrows():
+        timestamp = pd.Timestamp(stamp).to_pydatetime()
+        if hits[0] is None and levels[0] is not None and float(row.low) <= levels[0]:
+            hits[0] = timestamp
+        for index in range(1, 4):
+            target_level = levels[index]
+            if hits[index] is None and target_level is not None and float(row.high) >= target_level:
+                hits[index] = timestamp
+    ordering = "NONE"
+    occurred = [(index, stamp) for index, stamp in enumerate(hits) if stamp is not None]
+    if occurred:
+        first_stamp = min(stamp for _, stamp in occurred)
+        simultaneous = {index for index, stamp in occurred if stamp == first_stamp}
+        first = 0 if 0 in simultaneous else min(simultaneous)
+        ordering = ("STOP_FIRST", "TARGET1_FIRST", "TARGET2_FIRST", "TARGET3_FIRST")[first]
+    if ordering == "STOP_FIRST":
+        result = "STOP_FIRST"
+    elif hits[3]:
+        result = "H3_SUCCESS"
+    elif hits[2]:
+        result = "H2_SUCCESS"
+    elif hits[1]:
+        result = "H1_SUCCESS"
+    else:
+        result = "PENDING"
+    return {
+        "stop_hit_at": hits[0],
+        "target1_hit_at": hits[1],
+        "target2_hit_at": hits[2],
+        "target3_hit_at": hits[3],
+        "ordering": ordering,
+        "result_classification": result,
+    }
+
+
 def accuracy_buckets(
     rows: list[dict[str, object]], group: str = "score"
 ) -> list[dict[str, object]]:

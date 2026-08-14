@@ -247,6 +247,20 @@ class MlOutcomeRow(Base):
     __table_args__ = (UniqueConstraint("signal_id", "horizon", name="uq_ml_outcome_horizon"),)
 
 
+class SignalAuditRow(Base):
+    """Monotonic, persisted level truth derived only from completed future bars."""
+
+    __tablename__ = "signal_audits"
+    signal_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    stop_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    target1_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    target2_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    target3_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ordering: Mapped[str] = mapped_column(String(24), default="NONE")
+    result_classification: Mapped[str] = mapped_column(String(32), default="PENDING")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class MlDatasetRow(Base):
     __tablename__ = "ml_datasets"
     dataset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
