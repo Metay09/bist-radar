@@ -181,13 +181,27 @@ def safe_intraday_cycle() -> dict[str, object] | None:
         service = IntradayResearchService()
         report = service.run()
         updated = service.update_outcomes()
+        from app.adaptive.service import AdaptiveDecisionService
+
+        try:
+            adaptive_updated = AdaptiveDecisionService().update()
+        except Exception as adaptive_exc:
+            from app.operations.jobs import mark_job
+
+            mark_job(
+                "adaptive_lifecycle",
+                False,
+                {"phase": "FAILED", "reason": type(adaptive_exc).__name__},
+            )
+            raise
         from app.ml.training import run_shadow_training
 
         run_shadow_training()
         log.info(
-            "intraday_scan_finished candidates=%d outcomes_updated=%d",
+            "intraday_scan_finished candidates=%d outcomes_updated=%d adaptive_updated=%d",
             len(report["candidates"]),  # type: ignore[arg-type]
             updated,
+            adaptive_updated,
         )
         return report
     except Exception as exc:

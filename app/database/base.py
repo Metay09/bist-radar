@@ -252,13 +252,69 @@ class SignalAuditRow(Base):
 
     __tablename__ = "signal_audits"
     signal_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    audit_version: Mapped[int] = mapped_column(Integer, default=2)
+    entry_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     stop_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     target1_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     target2_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     target3_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ordering: Mapped[str] = mapped_column(String(24), default="NONE")
     result_classification: Mapped[str] = mapped_column(String(32), default="PENDING")
+    highest_target: Mapped[int] = mapped_column(Integer, default=0)
+    bars_to_entry: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bars_after_entry: Mapped[int] = mapped_column(Integer, default=0)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AdaptiveSetupRow(Base):
+    __tablename__ = "adaptive_setups"
+    setup_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(120), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    policy_version: Mapped[str] = mapped_column(String(40), index=True)
+    state: Mapped[str] = mapped_column(String(40), index=True)
+    health: Mapped[str] = mapped_column(String(24))
+    current_plan_version: Mapped[int] = mapped_column(Integer, default=1)
+    signal_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    entry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    initial_stop: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    active_stop: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    highest_target: Mapped[int] = mapped_column(Integer, default=0)
+    action: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    config: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AdaptivePlanVersionRow(Base):
+    __tablename__ = "adaptive_plan_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    setup_id: Mapped[str] = mapped_column(String(160), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reason: Mapped[str] = mapped_column(String(80))
+    plan: Mapped[dict[str, object]] = mapped_column(JSON)
+    __table_args__ = (UniqueConstraint("setup_id", "version", name="uq_adaptive_plan_version"),)
+
+
+class AdaptiveEventRow(Base):
+    __tablename__ = "adaptive_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    setup_id: Mapped[str] = mapped_column(String(160), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    event_type: Mapped[str] = mapped_column(String(40), index=True)
+    state_from: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    state_to: Mapped[str] = mapped_column(String(40))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    __table_args__ = (UniqueConstraint("setup_id", "sequence", name="uq_adaptive_event_seq"),)
 
 
 class MlDatasetRow(Base):

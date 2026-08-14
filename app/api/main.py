@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import desc, select, text
 
 from app import LIVE_TRADING
+from app.adaptive.service import AdaptiveDecisionService
 from app.api.dashboard import (
     candidates as dashboard_candidates,
 )
@@ -61,6 +62,7 @@ replay_repository = ReplayRepository()
 research_repository = ResearchRepository()
 intraday_repository = IntradayRepository()
 signal_intelligence = SignalIntelligence()
+adaptive_decisions = AdaptiveDecisionService()
 universe_repository = UniverseRepository()
 
 
@@ -531,6 +533,19 @@ def symbol_shadow_status(symbol: str) -> dict[str, object]:
 @app.get("/shadow/status")
 def shadow_status() -> dict[str, object]:
     return signal_intelligence.shadow_status()
+
+
+@app.get("/symbols/{symbol}/adaptive-decision")
+def adaptive_decision(symbol: str) -> dict[str, object]:
+    result = adaptive_decisions.detail(symbol)
+    if result is None:
+        raise HTTPException(404, "adaptive setup not found")
+    return result
+
+
+@app.get("/analytics/adaptive")
+def adaptive_analytics() -> dict[str, object]:
+    return adaptive_decisions.analytics()
 
 
 @app.get("/analytics/scores")

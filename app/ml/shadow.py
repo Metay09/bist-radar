@@ -135,6 +135,32 @@ def logistic_predictor(
     return list(1 / (1 + np.exp(-np.clip(target @ weights, -30, 30))))
 
 
+def fit_logistic_artifact(
+    train_x: np.ndarray, train_y: np.ndarray, *, steps: int = 400, l2: float = 0.01
+) -> dict[str, object]:
+    """Fit a small reproducible probability model and return a JSON artifact."""
+    if train_x.ndim != 2 or len(train_x) != len(train_y) or not len(train_y):
+        raise ValueError("aligned training matrix required")
+    mean = train_x.mean(axis=0)
+    scale = train_x.std(axis=0)
+    scale[scale == 0] = 1
+    design = np.c_[np.ones(len(train_x)), (train_x - mean) / scale]
+    weights = np.zeros(design.shape[1])
+    for _ in range(steps):
+        probability = 1 / (1 + np.exp(-np.clip(design @ weights, -30, 30)))
+        penalty = np.r_[0.0, weights[1:]] * l2
+        weights -= 0.05 * ((design.T @ (probability - train_y)) / len(train_y) + penalty)
+    return {"mean": mean.tolist(), "scale": scale.tolist(), "weights": weights.tolist()}
+
+
+def predict_logistic_artifact(artifact: dict[str, object], values: np.ndarray) -> list[float]:
+    mean = np.asarray(artifact["mean"], dtype=float)
+    scale = np.asarray(artifact["scale"], dtype=float)
+    weights = np.asarray(artifact["weights"], dtype=float)
+    design = np.c_[np.ones(len(values)), (values - mean) / scale]
+    return list(1 / (1 + np.exp(-np.clip(design @ weights, -30, 30))))
+
+
 def decision_stump_predictor(
     train_x: np.ndarray, train_y: np.ndarray, predict_x: np.ndarray
 ) -> list[float]:

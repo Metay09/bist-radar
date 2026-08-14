@@ -116,13 +116,38 @@ class IntradayRepository:
             if row is None:
                 session.add(SignalAuditRow(signal_id=signal_id, updated_at=now, **audit))
                 return
-            # First-hit timestamps are immutable once observed.
-            for field in ("stop_hit_at", "target1_hit_at", "target2_hit_at", "target3_hit_at"):
-                if getattr(row, field) is None and audit.get(field) is not None:
-                    setattr(row, field, audit[field])
-            if row.ordering == "NONE" and audit.get("ordering") != "NONE":
-                row.ordering = str(audit["ordering"])
-            row.result_classification = str(audit["result_classification"])
+            if "audit_version" not in audit:
+                for field in (
+                    "stop_hit_at",
+                    "target1_hit_at",
+                    "target2_hit_at",
+                    "target3_hit_at",
+                ):
+                    if getattr(row, field) is None and audit.get(field) is not None:
+                        setattr(row, field, audit[field])
+                if row.ordering == "NONE" and audit.get("ordering") != "NONE":
+                    row.ordering = str(audit["ordering"])
+                row.result_classification = str(audit["result_classification"])
+                row.updated_at = now
+                return
+            # The state is a deterministic replay of completed bars. Replacing the
+            # legacy v1 touch audit is intentional: v1 did not require an entry.
+            for field in (
+                "audit_version",
+                "entry_hit_at",
+                "entry_price",
+                "stop_hit_at",
+                "target1_hit_at",
+                "target2_hit_at",
+                "target3_hit_at",
+                "ordering",
+                "result_classification",
+                "highest_target",
+                "bars_to_entry",
+                "bars_after_entry",
+                "terminal_at",
+            ):
+                setattr(row, field, audit[field])
             row.updated_at = now
 
     def outcomes(self) -> list[dict[str, object]]:

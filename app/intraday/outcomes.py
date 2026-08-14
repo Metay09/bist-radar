@@ -15,6 +15,8 @@ class LabelStatus(StrEnum):
 HORIZONS = {"15m": 1, "30m": 2, "60m": 4, "120m": 8}
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 SESSION_CLOSE = time(18, 0)
+ENTRY_WINDOW_BARS = 8
+MANAGEMENT_WINDOW_BARS = 16
 
 
 def _number(value: object) -> float:
@@ -140,12 +142,36 @@ def lifecycle(outcomes: dict[str, HorizonOutcome]) -> str:
 
 def level_audit(
     signal_time: datetime, bars: pd.DataFrame, plan: dict[str, object]
-) -> dict[str, datetime | str | None]:
-    """Find first completed-bar touches. A same-bar stop/target ambiguity is STOP_FIRST."""
+) -> dict[str, object]:
+    """Evaluate an immutable plan only after its entry band trades.
+
+    Entry is valid for eight completed bars. Once active, the plan is managed for
+    sixteen bars. Stop wins any same-bar OHLC ambiguity. This is deliberately a
+    conservative, reproducible research convention rather than an execution claim.
+    """
     future = bars.loc[bars.index > signal_time]
+    entry_low = plan.get("entry_zone_low")
+    entry_high = plan.get("entry_zone_high")
     stop = plan.get("stop_price")
     raw_targets = plan.get("targets")
     targets = raw_targets if isinstance(raw_targets, list) else []
+    if not isinstance(entry_low, (int, float)) or not isinstance(entry_high, (int, float)):
+        return {
+            "audit_version": 2,
+            "entry_hit_at": None,
+            "entry_price": None,
+            "stop_hit_at": None,
+            "target1_hit_at": None,
+            "target2_hit_at": None,
+            "target3_hit_at": None,
+            "ordering": "NONE",
+            "result_classification": "PLAN_UNAVAILABLE",
+            "highest_target": 0,
+            "bars_to_entry": None,
+            "bars_after_entry": 0,
+            "terminal_at": None,
+        }
+    low, high = sorted((float(entry_low), float(entry_high)))
     levels: list[float | None] = [
         float(stop) if isinstance(stop, (int, float)) else None,
         *[
@@ -156,39 +182,84 @@ def level_audit(
         ],
     ]
     levels += [None] * (4 - len(levels))
+    entry_at: datetime | None = None
+    entry_price: float | None = None
+    entry_index: int | None = None
+    entry_window = future.iloc[:ENTRY_WINDOW_BARS]
+    for index, (stamp, row) in enumerate(entry_window.iterrows(), start=1):
+        if float(row.low) <= high and float(row.high) >= low:
+            entry_at = pd.Timestamp(stamp).to_pydatetime()
+            opening = float(row.open)
+            entry_price = min(max(opening, low), high)
+            entry_index = index
+            break
+    base = {
+        "audit_version": 2,
+        "entry_hit_at": entry_at,
+        "entry_price": entry_price,
+        "highest_target": 0,
+        "bars_to_entry": entry_index,
+        "bars_after_entry": 0,
+        "terminal_at": None,
+    }
+    if entry_index is None:
+        terminal = len(future) >= ENTRY_WINDOW_BARS
+        return base | {
+            "stop_hit_at": None,
+            "target1_hit_at": None,
+            "target2_hit_at": None,
+            "target3_hit_at": None,
+            "ordering": "NONE",
+            "result_classification": "NO_ENTRY" if terminal else "WAITING_ENTRY",
+            "terminal_at": (
+                pd.Timestamp(entry_window.index[-1]).to_pydatetime() if terminal else None
+            ),
+        }
+
+    managed = future.iloc[entry_index - 1 : entry_index - 1 + MANAGEMENT_WINDOW_BARS]
     hits: list[datetime | None] = [None, None, None, None]
-    for stamp, row in future.iterrows():
+    stopped = False
+    for stamp, row in managed.iterrows():
         timestamp = pd.Timestamp(stamp).to_pydatetime()
-        if hits[0] is None and levels[0] is not None and float(row.low) <= levels[0]:
+        # Stop is checked first: OHLC cannot reveal intrabar ordering.
+        if levels[0] is not None and float(row.low) <= levels[0]:
             hits[0] = timestamp
+            stopped = True
+            break
         for index in range(1, 4):
             target_level = levels[index]
             if hits[index] is None and target_level is not None and float(row.high) >= target_level:
                 hits[index] = timestamp
-    ordering = "NONE"
-    occurred = [(index, stamp) for index, stamp in enumerate(hits) if stamp is not None]
-    if occurred:
-        first_stamp = min(stamp for _, stamp in occurred)
-        simultaneous = {index for index, stamp in occurred if stamp == first_stamp}
-        first = 0 if 0 in simultaneous else min(simultaneous)
-        ordering = ("STOP_FIRST", "TARGET1_FIRST", "TARGET2_FIRST", "TARGET3_FIRST")[first]
-    if ordering == "STOP_FIRST":
-        result = "STOP_FIRST"
-    elif hits[3]:
-        result = "H3_SUCCESS"
-    elif hits[2]:
-        result = "H2_SUCCESS"
-    elif hits[1]:
-        result = "H1_SUCCESS"
+        if hits[3] is not None:
+            break
+    highest = 3 if hits[3] else 2 if hits[2] else 1 if hits[1] else 0
+    terminal = stopped or highest == 3 or len(managed) >= MANAGEMENT_WINDOW_BARS
+    if stopped:
+        result = "STOPPED"
+        ordering = "STOP_FIRST" if highest == 0 else f"H{highest}_THEN_STOP"
+    elif highest == 3:
+        result, ordering = "H3_REACHED", "TARGET1_FIRST"
+    elif terminal:
+        result, ordering = f"EXPIRED_H{highest}", "TARGET1_FIRST" if highest else "NONE"
     else:
-        result = "PENDING"
-    return {
+        result, ordering = (
+            (f"H{highest}_ACTIVE" if highest else "ENTRY_ACTIVE"),
+            ("TARGET1_FIRST" if highest else "NONE"),
+        )
+    return base | {
         "stop_hit_at": hits[0],
         "target1_hit_at": hits[1],
         "target2_hit_at": hits[2],
         "target3_hit_at": hits[3],
         "ordering": ordering,
         "result_classification": result,
+        "highest_target": highest,
+        "bars_after_entry": len(managed),
+        "terminal_at": (
+            hits[0]
+            or hits[3]
+            or (pd.Timestamp(managed.index[-1]).to_pydatetime() if terminal else None)
+        ),
     }
 
 

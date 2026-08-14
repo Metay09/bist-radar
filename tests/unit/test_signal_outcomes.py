@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import pytest
 
-from app.intraday.outcomes import LabelStatus, accuracy_buckets, label_signal, lifecycle
+from app.intraday.outcomes import (
+    LabelStatus,
+    accuracy_buckets,
+    label_signal,
+    level_audit,
+    lifecycle,
+)
 
 
 def bars(start: datetime, count: int = 12) -> pd.DataFrame:
@@ -78,6 +84,44 @@ def test_stop_first_is_conservative() -> None:
     data.iloc[0, data.columns.get_loc("high")] = 103
     outcome = label_signal(signal, 100, data, signal + timedelta(hours=3), stop=98)
     assert outcome["15m"].hit_stop_first is True
+
+
+def test_plan_requires_entry_before_stop_or_targets() -> None:
+    signal = datetime(2026, 1, 5, 7, tzinfo=UTC)
+    data = bars(signal, 20)
+    data.loc[:, "low"] = 105
+    data.loc[:, "high"] = 110
+    plan = {
+        "entry_zone_low": 99.0,
+        "entry_zone_high": 101.0,
+        "stop_price": 98.0,
+        "targets": [{"price": 102.0}, {"price": 103.0}, {"price": 104.0}],
+    }
+    audit = level_audit(signal, data, plan)
+    assert audit["result_classification"] == "NO_ENTRY"
+    assert audit["target3_hit_at"] is None
+
+
+def test_entry_aware_plan_tracks_targets_and_same_bar_stop_first() -> None:
+    signal = datetime(2026, 1, 5, 7, tzinfo=UTC)
+    data = bars(signal, 20)
+    plan = {
+        "entry_zone_low": 99.0,
+        "entry_zone_high": 101.0,
+        "stop_price": 98.0,
+        "targets": [{"price": 102.0}, {"price": 103.0}, {"price": 104.0}],
+    }
+    data.iloc[0, data.columns.get_loc("low")] = 97
+    data.iloc[0, data.columns.get_loc("high")] = 104
+    stopped = level_audit(signal, data, plan)
+    assert stopped["entry_hit_at"] is not None
+    assert stopped["result_classification"] == "STOPPED"
+    assert stopped["highest_target"] == 0
+
+    data.iloc[0, data.columns.get_loc("low")] = 99
+    reached = level_audit(signal, data, plan)
+    assert reached["result_classification"] == "H3_REACHED"
+    assert reached["highest_target"] == 3
 
 
 def test_accuracy_score_and_rvol_buckets() -> None:

@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database.base import Base, MlFeatureSnapshotRow, MlOutcomeRow
+from app.database.base import Base, MlFeatureSnapshotRow, MlOutcomeRow, SignalAuditRow
 from app.intraday.intelligence import SignalIntelligence
 from app.intraday.repository import IntradayRepository
 from app.ml import training
@@ -66,6 +66,23 @@ def seed(factory, count: int = 3) -> None:  # type: ignore[no-untyped-def]
                     },
                 )
             )
+            session.add(
+                SignalAuditRow(
+                    signal_id=signal_id,
+                    audit_version=2,
+                    entry_hit_at=stamp + timedelta(minutes=15),
+                    entry_price=100,
+                    ordering="TARGET1_FIRST",
+                    result_classification=f"EXPIRED_H{min(item % 4, 2)}"
+                    if item % 4 < 3
+                    else "H3_REACHED",
+                    highest_target=item % 4,
+                    bars_to_entry=1,
+                    bars_after_entry=16,
+                    terminal_at=stamp + timedelta(hours=4),
+                    updated_at=stamp + timedelta(hours=4),
+                )
+            )
 
 
 def test_signal_read_models_filters_analytics_and_shadow() -> None:
@@ -121,8 +138,8 @@ def test_training_threshold_trigger_and_persistence(monkeypatch) -> None:  # typ
     monkeypatch.setattr(
         training, "mark_job", lambda name, success, detail: events.append((name, success))
     )
-    monkeypatch.setattr(training, "get_settings", lambda: SimpleNamespace(ml_training_threshold=3))
-    seed(factory, 2)
+    monkeypatch.setattr(training, "get_settings", lambda: SimpleNamespace(ml_training_threshold=20))
+    seed(factory, 19)
     assert training.run_shadow_training() is False
     seed(factory, 1)
     assert training.run_shadow_training() is True

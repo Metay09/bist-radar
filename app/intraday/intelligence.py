@@ -77,6 +77,13 @@ class SignalIntelligence:
                     select(SignalAuditRow).where(SignalAuditRow.signal_id.in_(signal_ids))
                 ).all()
             }
+            predictions: dict[str, MlPredictionRow] = {}
+            for prediction in session.scalars(
+                select(MlPredictionRow)
+                .where(MlPredictionRow.signal_id.in_(signal_ids))
+                .order_by(MlPredictionRow.created_at.desc())
+            ).all():
+                predictions.setdefault(prediction.signal_id, prediction)
         by_signal: dict[str, dict[str, MlOutcomeRow]] = {}
         for outcome in outcomes:
             by_signal.setdefault(outcome.signal_id, {})[outcome.horizon] = outcome
@@ -96,12 +103,29 @@ class SignalIntelligence:
                 "result_classification": audit.result_classification if audit else "PENDING",
             }
             if audit:
-                for name in ("stop_hit_at", "target1_hit_at", "target2_hit_at", "target3_hit_at"):
+                for name in (
+                    "entry_hit_at",
+                    "stop_hit_at",
+                    "target1_hit_at",
+                    "target2_hit_at",
+                    "target3_hit_at",
+                    "terminal_at",
+                ):
                     stamp = getattr(audit, name)
                     audit_payload[name] = stamp
                     audit_payload[name.replace("_at", "_minutes")] = _minutes(
                         row.signal_time, stamp
                     )
+                audit_payload |= {
+                    "audit_version": audit.audit_version,
+                    "entry_price": float(audit.entry_price)
+                    if audit.entry_price is not None
+                    else None,
+                    "highest_target": audit.highest_target,
+                    "bars_to_entry": audit.bars_to_entry,
+                    "bars_after_entry": audit.bars_after_entry,
+                }
+            prediction = predictions.get(row.signal_id)
             record = features | {
                 "signal_id": row.signal_id,
                 "signal_timestamp": row.signal_time,
@@ -111,6 +135,7 @@ class SignalIntelligence:
                 "score_bucket": bucket,
                 "outcomes": metrics,
                 "audit": audit_payload,
+                "shadow_prediction": dict(prediction.predictions) if prediction else None,
                 "has_trade_plan_snapshot": isinstance(features.get("trade_plan_snapshot"), dict),
             }
             if status and status not in {
@@ -156,7 +181,15 @@ class SignalIntelligence:
                     "pending": sum(x.get("lifecycle") == "OUTCOME_PENDING" for x in members),
                     "partial": sum(x.get("lifecycle") == "PARTIALLY_LABELED" for x in members),
                     "h1_hits": sum(x["audit"].get("target1_hit_at") is not None for x in members),
-                    "stop_first": sum(x["audit"].get("ordering") == "STOP_FIRST" for x in members),
+                    "h2_hits": sum(x["audit"].get("target2_hit_at") is not None for x in members),
+                    "h3_hits": sum(x["audit"].get("target3_hit_at") is not None for x in members),
+                    "entered": sum(x["audit"].get("entry_hit_at") is not None for x in members),
+                    "no_entry": sum(
+                        x["audit"].get("result_classification") == "NO_ENTRY" for x in members
+                    ),
+                    "stopped": sum(
+                        x["audit"].get("result_classification") == "STOPPED" for x in members
+                    ),
                 }
             )
         return output
@@ -277,8 +310,38 @@ class SignalIntelligence:
             evaluations = session.scalar(select(func.count()).select_from(MlEvaluationRow)) or 0
             predictions = session.scalar(select(func.count()).select_from(MlPredictionRow)) or 0
             training = session.get(WorkerStateRow, "shadow_training")
+            eligible = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(SignalAuditRow)
+                    .where(
+                        SignalAuditRow.audit_version == 2,
+                        SignalAuditRow.result_classification.in_(
+                            (
+                                "NO_ENTRY",
+                                "STOPPED",
+                                "H3_REACHED",
+                                "EXPIRED_H0",
+                                "EXPIRED_H1",
+                                "EXPIRED_H2",
+                            )
+                        ),
+                    )
+                )
+                or 0
+            )
+            latest_model = models[0] if models else None
+            latest_evaluation = (
+                session.scalar(
+                    select(MlEvaluationRow)
+                    .where(MlEvaluationRow.model_id == latest_model.model_id)
+                    .order_by(MlEvaluationRow.created_at.desc())
+                    .limit(1)
+                )
+                if latest_model
+                else None
+            )
         threshold = 200
-        eligible = labeled
         state = (
             "MODEL_READY"
             if models
@@ -309,6 +372,9 @@ class SignalIntelligence:
             "evaluations": evaluations,
             "predictions": predictions,
             "current_model": models[0].model_id if models else None,
+            "model_type": latest_model.model_type if latest_model else None,
+            "sample_maturity": latest_model.metadata_json.get("maturity") if latest_model else None,
+            "evaluation": latest_evaluation.metrics if latest_evaluation else None,
             "last_dataset_update": datasets[0].created_at if datasets else None,
             "last_training_attempt": training.last_started_at if training else None,
             "last_successful_training": training.last_success_at if training else None,
