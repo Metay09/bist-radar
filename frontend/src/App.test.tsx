@@ -10,7 +10,7 @@ const candidate={symbol:'ASELS',radar_score:91,classification:'VERY_STRONG_CANDI
 const plan={symbol:'ASELS',timestamp:stamp,reference_price:200,entry_zone_low:198,entry_zone_high:201,breakout_trigger:200,stop_price:194,stop_distance_percent:3,targets:[{price:209,return_percent:4.5},{price:215,return_percent:7.5},{price:218,return_percent:9}],risk_reward:2.5,status:'BREAKOUT_ONAYI',explanation:['RVOL yüksek','Veri eski; plan son bara dayanır.'],data_age_minutes:90,stale:true,research_only:true,position_sizing:{account_equity:100000,max_risk_percent:.75,allowed_risk_amount:750,suggested_position_value:20000,estimated_quantity:100,advisory_only:true}};
 const detail={symbol:'ASELS',candidate,bars:[{timestamp:stamp,open:198,high:202,low:197,close:200,volume:100}],progression:[],freshness,trade_plan:plan};
 
-beforeEach(()=>{localStorage.clear();vi.stubGlobal('fetch',vi.fn((url:string)=>Promise.resolve({ok:true,json:()=>Promise.resolve(url.includes('performance')?{realized_pnl:0,open_positions:0,closed_trades:0,mtm_equity:null}:url.includes('/symbols/')?detail:url.includes('trade-plans')?[plan]:url.includes('summary')?summary:url.includes('candidates')?[candidate]:url.includes('/signals/history')?[candidate]:url.includes('/ml/status')?{observations:19,fully_labeled:0}:url.includes('system/overview')?{database:'HEALTHY',worker_jobs:[]}:[])}))) });
+beforeEach(()=>{localStorage.clear();sessionStorage.clear();vi.stubGlobal('fetch',vi.fn((url:string)=>Promise.resolve({ok:true,json:()=>Promise.resolve(url.includes('performance')?{realized_pnl:0,open_positions:0,closed_trades:0,mtm_equity:null}:url.includes('/symbols/')?detail:url.includes('trade-plans')?[plan]:url.includes('summary')?summary:url.includes('candidates')?[candidate]:url.includes('/signals/history')?[candidate]:url.includes('/ml/status')?{observations:19,fully_labeled:0}:url.includes('system/overview')?{database:'HEALTHY',worker_jobs:[]}:[])}))) });
 afterEach(()=>cleanup());
 
 describe('dashboard UX',()=>{
@@ -20,6 +20,14 @@ describe('dashboard UX',()=>{
     expect(screen.getByLabelText('Mobil ana navigasyon')).toBeInTheDocument();
     expect(document.querySelector('.desktop-sidebar')).toBeInTheDocument();
     expect(document.querySelector('.mobile-signals')).toBeInTheDocument();
+  });
+  it('restores radar search and filter state after returning from detail',async()=>{
+    localStorage.setItem('bist-radar-tour-seen','1');
+    sessionStorage.setItem('bist-radar-query','ASE');
+    sessionStorage.setItem('bist-radar-strength','VERY_STRONG_CANDIDATE');
+    render(<MemoryRouter><App/></MemoryRouter>);
+    expect(await screen.findByDisplayValue('ASE')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Çok Güçlü'})).toHaveClass('active');
   });
   it('opens, dismisses, persists and reopens guided tour',()=>{
     render(<MemoryRouter><App/></MemoryRouter>);expect(screen.getByText('BIST Radar’a hoş geldiniz')).toBeInTheDocument();

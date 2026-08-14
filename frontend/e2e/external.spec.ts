@@ -36,3 +36,22 @@ test('yayındaki gerçek dashboard ekranları',async({page})=>{
   await expect(page.locator('.desktop-sidebar')).toBeVisible();
   await page.screenshot({path:'artifacts/desktop-radar.png',fullPage:true});
 });
+
+test('yayında detaydan dönünce Radar konumu korunur',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(externalUrl!);
+  await page.evaluate(()=>localStorage.setItem('bist-radar-tour-seen','1'));
+  await page.reload();
+  await expect(page.locator('.skeleton')).toHaveCount(0,{timeout:15_000});
+  const cards=page.locator('.signal-card');
+  expect(await cards.count()).toBeGreaterThan(5);
+  const link=cards.last().locator('.card-link');
+  await link.scrollIntoViewIfNeeded();
+  const before=await page.evaluate(()=>scrollY);
+  expect(before).toBeGreaterThan(500);
+  await link.click();
+  await expect(page.getByRole('heading',{name:/İşlem Planı/})).toBeVisible();
+  await page.goBack();
+  await expect(page.locator('.skeleton')).toHaveCount(0,{timeout:15_000});
+  await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(before-100);
+});
