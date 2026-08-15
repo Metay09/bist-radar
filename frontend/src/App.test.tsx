@@ -184,9 +184,9 @@ describe("dashboard UX", () => {
     expect(screen.getByText(/Veri 90 dk eski/)).toBeInTheDocument();
     expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Sinyal Geçmişi" }),
+      screen.getByRole("tab", { name: "GEÇMİŞ" }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Grafik" }));
+    fireEvent.click(screen.getByRole("tab", { name: "GRAFİK" }));
     expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();
   });
   it("renders signal mobile cards and contextual help", async () => {
