@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const externalUrl = process.env.EXTERNAL_ACCEPTANCE_URL;
 test.skip(!externalUrl, "External acceptance URL is opt-in");
+test.setTimeout(120_000);
 
 test("yayındaki gerçek dashboard ekranları", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 });
@@ -53,7 +54,7 @@ test("yayındaki gerçek dashboard ekranları", async ({ page }) => {
     path: "artifacts/android-360-astor-plan.png",
     fullPage: true,
   });
-  await page.getByRole("tab", { name: "Grafik" }).click();
+  await page.getByRole("tab", { name: "GRAFİK" }).click();
   for (const label of [
     "Hedef 3",
     "Hedef 2",
