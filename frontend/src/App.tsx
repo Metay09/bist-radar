@@ -16,6 +16,7 @@ import type {
   Signal,
   TradePlan,
 } from "./types";
+import { Icon } from "./design-system/Icon";
 
 const trNumber = (n: number, d = 2) =>
   new Intl.NumberFormat("tr-TR", {
@@ -83,12 +84,13 @@ const planLabel = (plan?: TradePlan) => {
   );
 };
 const nav = [
-  ["/", "⌁", "Radar"],
-  ["/signals", "◫", "Sinyaller"],
-  ["/portfolio", "◉", "Portföy"],
-  ["/analysis", "⌗", "Analiz"],
-  ["/system", "⚙", "Sistem"],
+  ["/", "radar", "Radar"],
+  ["/tracking", "tracking", "Takip"],
+  ["/history", "history", "Geçmiş"],
+  ["/analysis", "analysis", "Analiz"],
+  ["/system", "system", "Sistem"],
 ];
+
 const tourSteps = [
   [
     "BIST Radar’a hoş geldiniz",
@@ -187,8 +189,10 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Radar />} />
           <Route path="/symbol/:symbol" element={<Stock />} />
+          <Route path="/tracking" element={<Tracking />} />
+          <Route path="/history" element={<Signals />} />
           <Route path="/signals" element={<Signals />} />
-          <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/portfolio" element={<Tracking />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/system" element={<System />} />
         </Routes>
@@ -368,7 +372,7 @@ function Navigation() {
     <nav aria-label="Masaüstü ana navigasyon">
       {nav.map(([to, icon, label]) => (
         <NavLink key={to} to={to} end={to === ("/" as never)}>
-          <span aria-hidden="true">{icon}</span>
+          <Icon name={icon} />
           {label}
         </NavLink>
       ))}
@@ -385,7 +389,7 @@ function Bottom() {
           end={to === ("/" as never)}
           aria-label={label}
         >
-          <span aria-hidden="true">{icon}</span>
+          <Icon name={icon} />
           <small>{label}</small>
         </NavLink>
       ))}
@@ -475,6 +479,7 @@ function Radar() {
   const [strength, setStrength] = useState(
     () => sessionStorage.getItem(radarState.strength) || "ALL",
   );
+  const [sort, setSort] = useState("priority");
   const restored = useRef(false);
   useEffect(() => {
     sessionStorage.setItem(radarState.query, query);
@@ -493,24 +498,31 @@ function Radar() {
         ),
       );
   }, [summary.data, rows.data]);
+  const planMap = useMemo(() => Object.fromEntries(
+    (plans.data || []).map((x) => [x.symbol, x]),
+  ), [plans.data]);
   const filtered = useMemo(
-    () =>
-      [...(rows.data || [])]
+    () => {
+      const result = [...(rows.data || [])]
         .filter((x) => x.symbol.includes(query.toUpperCase()))
         .filter(
           (x) =>
             strength === "ALL" ||
             (strength === "BIST100" && x.bist100_member) ||
             x.classification === strength,
-        )
-        .sort(
-          (a, b) =>
-            b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol),
-        ),
-    [rows.data, query, strength],
-  );
-  const planMap = Object.fromEntries(
-    (plans.data || []).map((x) => [x.symbol, x]),
+        );
+      return result.sort((a, b) => {
+        if (sort === "radar") return b.radar_score - a.radar_score;
+        if (sort === "rvol") return b.rvol - a.rvol;
+        if (sort === "momentum") return b.early_momentum_score - a.early_momentum_score;
+        if (sort === "newest") return Date.parse(b.timestamp) - Date.parse(a.timestamp);
+        if (sort === "rr") return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
+        if (sort === "distance") return Math.abs(a.breakout_distance) - Math.abs(b.breakout_distance);
+        const priorities: Record<string, number> = {BREAKOUT_ONAYI: 0, GIRIS_BOLGESINDE: 1, GIRIS_BEKLENIYOR: 2, KACMIS_KOVALAMA: 3, GECERSIZ: 4};
+        return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score;
+      });
+    },
+    [rows.data, query, strength, sort, planMap],
   );
   if (!summary.data) return <State error={summary.error} />;
   const s = summary.data;
@@ -562,7 +574,7 @@ function Radar() {
                 text="0–100 bileşik karar-destek puanıdır; otomatik alım değildir."
               />
             </h2>
-            <p>Radar skoruna göre sıralı</p>
+            <p>Aksiyon önceliğine göre karar listesi</p>
           </div>
           <input
             aria-label="Sembol ara"
@@ -571,6 +583,13 @@ function Radar() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
+        <label className="sort-control">Sırala
+          <select aria-label="Radar sıralaması" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="priority">Önem</option><option value="radar">Radar</option><option value="rvol">RVOL</option>
+            <option value="momentum">Momentum</option><option value="rr">Risk / Getiri</option><option value="newest">En Yeni</option>
+            <option value="distance">Entry zone distance</option>
+          </select>
+        </label>
         <div
           className="tabs universe-filters"
           role="group"
@@ -699,7 +718,12 @@ function CandidateList({
                   <b>{x.early_momentum_score}</b>
                 </span>
               </div>
-              <PlanBadge plan={plan} />
+              <div className="candidate-action"><small>ŞİMDİKİ AKSİYON</small><PlanBadge plan={plan} /></div>
+              {plan?.entry_zone_low != null && <div className="quick-levels">
+                <Metric label="ALIM" value={`${trNumber(plan.entry_zone_low)}–${trNumber(plan.entry_zone_high!)}`} />
+                <Metric label="STOP" value={trNumber(plan.stop_price!)} tone="stop" />
+                <Metric label="H1" value={plan.targets?.[0] ? trNumber(plan.targets[0].price) : "—"} tone="target" />
+              </div>}
               {plan?.entry_zone_low != null && (
                 <details>
                   <summary>İşlem planını göster</summary>
@@ -972,7 +996,7 @@ function Stock() {
   const result = useLoad(() => api.detail(symbol), [symbol]);
   const results = useLoad(() => api.symbolResults(symbol), [symbol]);
   const shadow = useLoad(() => api.symbolShadow(symbol), [symbol]);
-  const [tab, setTab] = useState("plan");
+  const [tab, setTab] = useState("summary");
   if (!result.data) return <State error={result.error} />;
   const d: Detail = result.data,
     c = d.candidate,
@@ -981,8 +1005,12 @@ function Stock() {
     <>
       <Header
         title={d.symbol}
-        subtitle="Hisse detay, işlem planı ve sinyal gelişimi"
+        subtitle="Karar, risk seviyeleri ve setup yaşam döngüsü"
       />
+      <section className="decision-hero">
+        <div><span className="eyebrow">ŞİMDİKİ KARAR</span><h2>Karar: {planLabel(d.trade_plan)}</h2><p>{d.trade_plan.explanation?.[0] || "Plan bağlamı henüz oluşmadı."}</p></div>
+        <div className="hero-score"><small>RADAR</small><strong>{c?.radar_score ?? "—"}</strong><span>{c ? trLabel(c.classification) : "Veri yok"}</span></div>
+      </section>
       <div className={`fresh ${d.freshness.state.toLowerCase()}`}>
         {d.freshness.label}
       </div>
@@ -1001,12 +1029,11 @@ function Stock() {
       )}
       <div className="tabs" role="tablist">
         {[
-          ["plan", "İşlem Planı"],
-          ["overview", "Teknik Bakış"],
-          ["chart", "Grafik"],
-          ["history", "Sinyal Geçmişi"],
-          ["outcomes", "Sonuçlar"],
-          ["shadow", "Shadow"],
+          ["summary", "ÖZET"],
+          ["chart", "GRAFİK"],
+          ["lifecycle", "YAŞAM DÖNGÜSÜ"],
+          ["history", "GEÇMİŞ"],
+          ["research", "ARAŞTIRMA"],
         ].map(([key, label]) => (
           <button
             role="tab"
@@ -1019,7 +1046,7 @@ function Stock() {
           </button>
         ))}
       </div>
-      {tab === "overview" && (
+      {tab === "summary" && (
         <section className="metrics">
           {[
             ["Fiyat", c ? trNumber(c.price) : "Veri yok"],
@@ -1038,14 +1065,14 @@ function Stock() {
           ))}
         </section>
       )}
-      {tab === "plan" && <TradePlanCard plan={d.trade_plan} />}{" "}
+      {tab === "summary" && <TradePlanCard plan={d.trade_plan} />}{" "}
       {tab === "chart" && (
         <section className="panel">
           <h2>15 Dakikalık Fiyat</h2>
           <CandleChart bars={d.bars} plan={d.trade_plan} />
         </section>
       )}
-      {tab === "history" && (
+      {tab === "lifecycle" && (
         <section className="panel">
           <h2>Sinyal Gelişimi</h2>
           {d.progression.length ? (
@@ -1063,7 +1090,7 @@ function Stock() {
           )}
         </section>
       )}
-      {tab === "outcomes" && (
+      {tab === "history" && (
         <section className="panel">
           <h2>Sonuçlar</h2>
           {results.data?.length ? (
@@ -1080,15 +1107,16 @@ function Stock() {
           )}
         </section>
       )}
-      {tab === "shadow" && (
+      {tab === "research" && (
         <section className="panel shadow">
           <h2>
-            SHADOW INTELLIGENCE{" "}
+            ARAŞTIRMA / SHADOW{" "}
             <Info
               label="Shadow"
               text="Bu model Radar kararını, riski veya işlemi değiştiremez."
             />
           </h2>
+          <div className="method-note"><b>Karara etkisi: YOK</b><span>Bu alan production Radar kararını değiştirmez.</span></div>
           {shadow.data ? (
             <dl>
               <dt>Radar sinyali</dt>
@@ -1348,17 +1376,40 @@ function SignalHistory({ signal: s }: { signal: Signal }) {
     </article>
   );
 }
-function Portfolio() {
+function Tracking() {
+  const signals = useLoad(() => api.signals("?limit=50"));
+  const rows = signals.data || [];
+  const groups = [
+    ["ALIM İÇİN HAZIR", ["ENTRY_READY", "GIRIS_BOLGESINDE", "BREAKOUT_ONAYI"]],
+    ["ALIM BEKLENİYOR", ["WAITING_ENTRY", "GIRIS_BEKLENIYOR"]],
+    ["AKTİF İŞLEM", ["ENTRY_ACTIVE", "H1_ACTIVE", "H2_ACTIVE"]],
+    ["MÜDAHALE GEREKEN", ["STOPPED", "TIME_EXIT", "THESIS_INVALIDATED"]],
+    ["BUGÜN TAMAMLANAN", ["H3_REACHED", "NO_ENTRY", "EXPIRED_H0", "EXPIRED_H1", "EXPIRED_H2"]],
+  ] as const;
+  return <>
+    <Header title="Takip" subtitle="Hazır setup’lar, aktif işlemler ve müdahale gerektiren durumlar" />
+    <div className="tracking-groups">
+      {groups.map(([title, states]) => {
+        const matches = rows.filter((row) => states.includes(String(row.lifecycle) as never));
+        return <section className="panel tracking-group" key={title}>
+          <div className="section-title"><h2>{title}</h2><span>{matches.length}</span></div>
+          {matches.length ? matches.slice(0, 8).map((row) => <SignalHistory key={row.signal_id} signal={row} />) :
+            <State empty text={title === "ALIM İÇİN HAZIR" ? "Henüz alıma hazır setup yok." : "Bu grupta güncel kayıt yok."} />}
+        </section>;
+      })}
+    </div>
+    <Portfolio embedded />
+  </>;
+}
+function Portfolio({ embedded = false }: { embedded?: boolean }) {
   const result = useLoad(api.performance);
   const trades = useLoad(api.trades);
   const d = result.data;
   const rows = trades.data || [];
   return (
     <>
-      <Header
-        title="Paper Portföy"
-        subtitle="Açık ve kapanmış sanal işlemler"
-      />
+      {!embedded && <Header title="Paper Portföy" subtitle="Açık ve kapanmış sanal işlemler" />}
+      {embedded && <SectionHeader title="Paper Portföy" subtitle="Açık ve kapanmış sanal işlemler" />}
       <div className="warning">
         <b>PAPER ONLY</b> — Gerçek emir veya broker bağlantısı yoktur.
       </div>
@@ -1389,6 +1440,9 @@ function Portfolio() {
       />
     </>
   );
+}
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="section-header"><div><span className="eyebrow">TAKİP</span><h2>{title}</h2><p>{subtitle}</p></div></div>;
 }
 function TradeSection({ title, rows }: { title: string; rows: PaperTrade[] }) {
   const empty = title.startsWith("Açık")
