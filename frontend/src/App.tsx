@@ -1295,14 +1295,33 @@ function SignalHistory({ signal: s }: { signal: Signal }) {
             ))}
           </div>
           {s.shadow_prediction && (
-            <div className="prediction-strip">
-              <b>Shadow model · calibration kapılı</b>
-              <span>Alım {shadowValue("entry", prediction.entry_probability)}</span>
-              <span>Stop-before-H1 {shadowValue("stop", prediction.stop_probability)}</span>
-              <span>H1 {shadowValue("h1", prediction.h1_probability)}</span>
-              <span>H2|H1 {shadowValue("h2", prediction.h2_probability)}</span>
-              <span>H3|H2 {shadowValue("h3", prediction.h3_probability)}</span>
-            </div>
+            <section className="research-card" aria-label="Araştırma shadow">
+              <div className="research-head">
+                <div>
+                  <small>ARAŞTIRMA / SHADOW</small>
+                  <b>Bu bölüm Radar kararını etkilemez.</b>
+                </div>
+                <span className="tag neutral">
+                  {String(prediction.confidence || "SHADOW")}
+                </span>
+              </div>
+              <div className="research-grid">
+                <Metric label="Radar Gücü" value={`${s.radar_score}/100`} />
+                <Metric label="ML Shadow" value={shadowValue("entry", prediction.entry_probability)} />
+                <Metric label="Expected R" value={typeof prediction.expected_r === "number" ? trNumber(prediction.expected_r, 2) : "Yetersiz veri"} />
+                <Metric label="R aralığı q10–q90" value={typeof prediction.q10_r === "number" && typeof prediction.q90_r === "number" ? `${trNumber(prediction.q10_r, 2)} – ${trNumber(prediction.q90_r, 2)}` : "Yetersiz veri"} />
+                <Metric label="Model kalite" value={String(prediction.model_quality || prediction.confidence || "Araştırılıyor")} />
+                <Metric label="Sample maturity" value={String(prediction.sample_maturity || "INSUFFICIENT_DATA")} />
+              </div>
+              <div className="prediction-strip">
+                <b>Calibration kapılı koşullu görevler</b>
+                <span>Alım {shadowValue("entry", prediction.entry_probability)}</span>
+                <span>Stop-before-H1 {shadowValue("stop", prediction.stop_probability)}</span>
+                <span>H1 {shadowValue("h1", prediction.h1_probability)}</span>
+                <span>H2|H1 {shadowValue("h2", prediction.h2_probability)}</span>
+                <span>H3|H2 {shadowValue("h3", prediction.h3_probability)}</span>
+              </div>
+            </section>
           )}
         </>
       ) : (

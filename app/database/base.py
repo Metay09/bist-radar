@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Engine,
     Float,
@@ -347,6 +348,66 @@ class MlEvaluationRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     model_id: Mapped[str] = mapped_column(String(80), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ResearchBaselineRow(Base):
+    __tablename__ = "research_baselines"
+    baseline_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    immutable: Mapped[bool] = mapped_column(Boolean, default=True)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class FeatureDefinitionRow(Base):
+    __tablename__ = "feature_definitions"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    schema_version: Mapped[str] = mapped_column(String(40), index=True)
+    source_timeframe: Mapped[str] = mapped_column(String(16))
+    formula: Mapped[str] = mapped_column(String(500))
+    missing_policy: Mapped[str] = mapped_column(String(80))
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON)
+
+
+class FeatureObservationRow(Base):
+    __tablename__ = "feature_observations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(120), index=True)
+    feature_name: Mapped[str] = mapped_column(String(80), index=True)
+    source_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    availability_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    value_json: Mapped[dict[str, object]] = mapped_column("value", JSON)
+    __table_args__ = (UniqueConstraint("signal_id", "feature_name", name="uq_feature_observation"),)
+
+
+class DataFreshnessObservationRow(Base):
+    __tablename__ = "data_freshness_observations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(40), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8))
+    bar_close_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    provider_available_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    persist_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON)
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id", "symbol", "timeframe", "bar_close_time", name="uq_freshness_bar"
+        ),
+    )
+
+
+class MlExperimentRow(Base):
+    __tablename__ = "ml_experiments"
+    experiment_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    data_hash: Mapped[str] = mapped_column(String(64), index=True)
+    feature_schema: Mapped[str] = mapped_column(String(40))
+    policy_version: Mapped[str] = mapped_column(String(40), index=True)
+    model: Mapped[str] = mapped_column(String(80))
+    hyperparameters: Mapped[dict[str, object]] = mapped_column(JSON)
+    date_ranges: Mapped[dict[str, object]] = mapped_column(JSON)
+    prior_trials: Mapped[int] = mapped_column(Integer)
     metrics: Mapped[dict[str, object]] = mapped_column(JSON)
 
 

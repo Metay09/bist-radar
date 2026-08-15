@@ -32,6 +32,7 @@ from app.backtest.repository import ReplayRepository
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.data.historical import CsvHistoricalProvider, SymbolMetadata
+from app.data.intraday_research import IntradayResearchBackfill
 from app.data.research_repository import ResearchRepository
 from app.data.vendor_mock import MockVendorA, MockVendorB
 from app.data.yfinance_provider import YFinanceResearchProvider
@@ -39,6 +40,8 @@ from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
 from app.intraday.intelligence import SignalIntelligence
 from app.intraday.outcomes import accuracy_buckets
 from app.intraday.repository import IntradayRepository
+from app.ml.registry import freeze_champion
+from app.ml.research_lab import champion_manifest
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
@@ -50,6 +53,7 @@ from app.universe.service import UniverseRepository
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     with SessionLocal() as session:
         session.execute(text("SELECT 1"))
+    freeze_champion()
     yield
 
 
@@ -63,6 +67,7 @@ research_repository = ResearchRepository()
 intraday_repository = IntradayRepository()
 signal_intelligence = SignalIntelligence()
 adaptive_decisions = AdaptiveDecisionService()
+intraday_research = IntradayResearchBackfill()
 universe_repository = UniverseRepository()
 
 
@@ -319,6 +324,12 @@ def research_status() -> dict[str, object]:
         "network_dependency": True,
         "production_approved": False,
         "flags": [flag.value for flag in provider.mandatory_flags],
+        "champion": champion_manifest(),
+        "ml_mode": "shadow",
+        "allow_ml_to_change_radar": False,
+        "auto_promotion": False,
+        "five_minute_latency": intraday_research.latency_report(),
+        "notice": "Bu bölüm Radar kararını etkilemez.",
     }
 
 

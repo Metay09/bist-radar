@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     app_name: str = "BIST Radar"
     trading_mode: Literal["paper", "live"] = "paper"
+    live_trading: bool = False
     database_url: str = "sqlite:///./bist_radar.db"
     timezone: str = "Europe/Istanbul"
     min_data_quality_score: float = 90
@@ -58,6 +59,11 @@ class Settings(BaseSettings):
     ml_mode: Literal["shadow"] = "shadow"
     allow_ml_to_change_radar: bool = False
     ml_training_threshold: int = 200
+    research_15m_lookback_days: int = 59
+    research_5m_lookback_days: int = 59
+    research_5m_liquid_symbols: int = 30
+    research_latency_min_symbols: int = 20
+    research_latency_max_symbols: int = 30
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)
@@ -76,6 +82,8 @@ class Settings(BaseSettings):
     def reject_live(self) -> "Settings":
         if self.trading_mode != "paper":
             raise ValueError("LIVE TRADING IS DISABLED: TRADING_MODE must be paper")
+        if self.live_trading:
+            raise ValueError("LIVE TRADING IS DISABLED: LIVE_TRADING must be false")
         if self.data_environment == "production" and not self.require_verified_calendar:
             raise ValueError("production requires verified calendar")
         if self.ml_mode != "shadow" or self.allow_ml_to_change_radar:
