@@ -175,7 +175,7 @@ class IntradayResearchService:
         return updated
 
 
-def safe_intraday_cycle() -> dict[str, object] | None:
+def safe_intraday_cycle(completed_bar_at: datetime | None = None) -> dict[str, object] | None:
     log = logging.getLogger(__name__)
     try:
         service = IntradayResearchService()
@@ -194,9 +194,14 @@ def safe_intraday_cycle() -> dict[str, object] | None:
                 {"phase": "FAILED", "reason": type(adaptive_exc).__name__},
             )
             raise
-        from app.ml.training import run_shadow_training
+        from app.research.cycle import AutonomousResearchCycle
 
-        run_shadow_training()
+        report_stamp = report.get("data_timestamp")
+        cycle_stamp = completed_bar_at or (
+            report_stamp if isinstance(report_stamp, datetime) else None
+        )
+        if cycle_stamp is not None:
+            AutonomousResearchCycle().run(cycle_stamp, datetime.now(UTC))
         log.info(
             "intraday_scan_finished candidates=%d outcomes_updated=%d adaptive_updated=%d",
             len(report["candidates"]),  # type: ignore[arg-type]

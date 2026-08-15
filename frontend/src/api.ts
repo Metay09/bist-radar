@@ -32,5 +32,8 @@ export const api = {
   performance: () => get<Record<string, unknown>>("/performance/summary"),
   accuracy: () => get<Record<string, unknown>[]>("/analytics/scores"),
   ml: () => get<Record<string, unknown>>("/shadow/status"),
+  evidence: () => get<Record<string, unknown>>("/research/evidence"),
+  researchDaily: () => get<Record<string, unknown>[]>("/research/daily"),
+  researchWeekly: () => get<Record<string, unknown>[]>("/research/weekly"),
   system: () => get<Record<string, unknown>>("/system/overview"),
 };

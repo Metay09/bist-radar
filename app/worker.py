@@ -155,7 +155,7 @@ def run() -> None:
                         )
                         if not update.provider_success and market_open(now):
                             raise RuntimeError(update.reason or "INTRADAY_DATA_UPDATE_FAILED")
-                        report = safe_intraday_cycle()
+                        report = safe_intraday_cycle(update.latest_completed_bar)
                         if report is None:
                             raise RuntimeError("INTRADAY_SCAN_FAILED")
                         report_stamp = report.get("data_timestamp")

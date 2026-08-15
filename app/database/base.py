@@ -411,6 +411,53 @@ class MlExperimentRow(Base):
     metrics: Mapped[dict[str, object]] = mapped_column(JSON)
 
 
+class ResearchCycleRow(Base):
+    __tablename__ = "research_cycles"
+    cycle_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    completed_bar_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    checkpoints: Mapped[dict[str, object]] = mapped_column(JSON)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ResearchLabelRow(Base):
+    __tablename__ = "research_labels"
+    signal_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    policy_version: Mapped[str] = mapped_column(String(40), index=True)
+    terminal_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cost_adjusted_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    labels: Mapped[dict[str, object]] = mapped_column(JSON)
+    trace: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class ResearchDatasetVersionRow(Base):
+    __tablename__ = "research_dataset_versions"
+    dataset_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    data_hash: Mapped[str] = mapped_column(String(64), index=True)
+    label_count: Mapped[int] = mapped_column(Integer)
+    feature_schema: Mapped[str] = mapped_column(String(40))
+    policy_version: Mapped[str] = mapped_column(String(40))
+    manifest: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class DailyResearchSnapshotRow(Base):
+    __tablename__ = "daily_research_snapshots"
+    session_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON)
+    deltas: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
+class WeeklyResearchReportRow(Base):
+    __tablename__ = "weekly_research_reports"
+    week_start: Mapped[str] = mapped_column(String(10), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+
+
 class NotificationEventRow(Base):
     __tablename__ = "notification_events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

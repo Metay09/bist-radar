@@ -11,11 +11,18 @@ from app.core.config import get_settings
 from app.database.base import (
     MlDatasetRow,
     MlEvaluationRow,
+    MlExperimentRow,
     MlFeatureSnapshotRow,
     MlModelRow,
     MlPredictionRow,
     SessionLocal,
     SignalAuditRow,
+)
+from app.ml.research_lab import (
+    FEATURE_SCHEMA_VERSION,
+    data_hash,
+    serializable_fold,
+    walk_forward_folds,
 )
 from app.ml.shadow import (
     calibration,
@@ -26,6 +33,7 @@ from app.ml.shadow import (
     temporal_split,
 )
 from app.operations.jobs import mark_job
+from app.research.governance import code_commit_sha
 
 FEATURES = (
     "radar_score",
@@ -243,7 +251,32 @@ def run_shadow_training(*, force: bool = False) -> bool:
             }
 
         dataset_id = str(uuid4())
+        experiment_id = f"exp-{now.strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
         model_id = f"shadow-entry-v2-{now.strftime('%Y%m%d%H%M%S')}"
+        session_dates = sorted({row.signal_time.date() for row, _ in rows})
+        folds = (
+            walk_forward_folds(
+                session_dates,
+                train_sessions=max(3, len(session_dates) // 2),
+                validation_sessions=max(1, len(session_dates) // 8),
+                test_sessions=max(1, len(session_dates) // 8),
+                purge_sessions=1,
+                embargo_sessions=1,
+            )
+            if len(session_dates) >= 8
+            else []
+        )
+        dataset_hash = data_hash(
+            [
+                {
+                    "signal_id": signal.signal_id,
+                    "signal_time": signal.signal_time.isoformat(),
+                    "audit": audit.result_classification,
+                    "highest_target": audit.highest_target,
+                }
+                for signal, audit in rows
+            ]
+        )
         matrix = np.asarray([_vector(row) for row in all_signals], dtype=float)
         predicted = {
             head: predict_logistic_artifact(artifact, matrix)
@@ -273,6 +306,7 @@ def run_shadow_training(*, force: bool = False) -> bool:
                     metadata_json={
                         "model_id": model_id,
                         "dataset_id": dataset_id,
+                        "experiment_id": experiment_id,
                         "sample_count": len(rows),
                         "feature_names": list(FEATURES),
                         "heads": list(HEADS),
@@ -281,6 +315,38 @@ def run_shadow_training(*, force: bool = False) -> bool:
                         "shadow_only": True,
                         "maturity": sample_maturity(len(rows)),
                         "created_at": now.isoformat(),
+                        "feature_schema": FEATURE_SCHEMA_VERSION,
+                        "policy_version": "adaptive-v1-h1-partial-trailing",
+                        "train_dates": [
+                            item.isoformat() for item in (folds[-1].train_dates if folds else ())
+                        ],
+                        "validation_dates": [
+                            item.isoformat()
+                            for item in (folds[-1].validation_dates if folds else ())
+                        ],
+                        "test_dates": [
+                            item.isoformat() for item in (folds[-1].test_dates if folds else ())
+                        ],
+                    },
+                )
+            )
+            session.add(
+                MlExperimentRow(
+                    experiment_id=experiment_id,
+                    created_at=now,
+                    data_hash=dataset_hash,
+                    feature_schema=FEATURE_SCHEMA_VERSION,
+                    policy_version="adaptive-v1-h1-partial-trailing",
+                    model="ENTRY_AWARE_LOGISTIC",
+                    hyperparameters={"steps": 400, "l2": 0.01, "random_seed": 0},
+                    date_ranges={"folds": [serializable_fold(fold) for fold in folds]},
+                    prior_trials=0,
+                    metrics={
+                        "oos_sample": sum(split["test"] for split in head_splits.values()),
+                        "folds": len(folds),
+                        "heads": evaluation,
+                        "code_commit_sha": code_commit_sha(),
+                        "promotion_candidate": False,
                     },
                 )
             )

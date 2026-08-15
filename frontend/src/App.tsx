@@ -1448,6 +1448,7 @@ function TradeSection({ title, rows }: { title: string; rows: PaperTrade[] }) {
 function Analysis() {
   const ml = useLoad(api.ml);
   const acc = useLoad(api.accuracy);
+  const evidence = useLoad(api.evidence);
   const ready = Number(ml.data?.training_eligible || 0) > 0;
   return (
     <>
@@ -1468,6 +1469,34 @@ function Analysis() {
           label="Üretilen tahmin"
           value={Number(ml.data?.predictions || 0)}
         />
+      </section>
+      <section className="panel shadow evidence-dashboard">
+        <div className="panelhead">
+          <div>
+            <span className="eyebrow">KANIT DURUMU</span>
+            <h2>Autonomous evidence accumulation</h2>
+            <p>Gerçek outcome ve bağımsız OOS zaman blokları biriktikçe güncellenir.</p>
+          </div>
+          <span className="tag neutral">Radar decision effect: NONE</span>
+        </div>
+        {!evidence.data ? <State error={evidence.error} /> : (
+          <div className="learning-grid">
+            <dt>15m observations</dt><dd>{String(evidence.data["15m_observations"] || 0)}</dd>
+            <dt>5m observations</dt><dd>{String(evidence.data["5m_observations"] || 0)}</dd>
+            <dt>5m latency maturity</dt><dd>{String((evidence.data.latency as Record<string, unknown>)?.maturity || "INSUFFICIENT")}</dd>
+            <dt>Mature labels</dt><dd>{String(evidence.data.mature_labels || 0)}</dd>
+            <dt>OOS sample / folds</dt><dd>{String(evidence.data.oos_sample || 0)} / {String(evidence.data.walk_forward_folds || 0)}</dd>
+            <dt>Predictive edge</dt><dd>{String(evidence.data.predictive_edge || "INSUFFICIENT")}</dd>
+            <dt>Economic edge</dt><dd>{String(evidence.data.economic_edge || "INSUFFICIENT")}</dd>
+            <dt>Current champion</dt><dd>{String(evidence.data.current_champion)}</dd>
+            <dt>Best challenger</dt><dd>{String(evidence.data.best_challenger || "Henüz yok")}</dd>
+            <dt>Challenger vs champion</dt><dd>{String(evidence.data.challenger_vs_champion)}</dd>
+            <dt>Expected-R improvement</dt><dd>{evidence.data.expected_r_improvement == null ? "INSUFFICIENT" : String(evidence.data.expected_r_improvement)}</dd>
+            <dt>Drawdown difference</dt><dd>{evidence.data.drawdown_difference == null ? "INSUFFICIENT" : String(evidence.data.drawdown_difference)}</dd>
+            <dt>Model status</dt><dd>{String(evidence.data.model_status)}</dd>
+            <dt>Auto promotion</dt><dd>NO</dd>
+          </div>
+        )}
       </section>
       <section className="panel shadow">
         <div className="panelhead">

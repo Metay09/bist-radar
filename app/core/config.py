@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     research_5m_liquid_symbols: int = 30
     research_latency_min_symbols: int = 20
     research_latency_max_symbols: int = 30
+    research_latency_policy_version: str = "latency-v1"
+    research_latency_min_sessions: int = 3
+    research_latency_min_completeness: float = 0.9
+    research_latency_ready_p95_seconds: int = 180
+    research_latency_degraded_p95_seconds: int = 300
+    research_retrain_min_new_labels: int = 50
+    research_retrain_min_total_labels: int = 250
+    research_retrain_min_elapsed_hours: int = 168
+    research_health_stale_hours: int = 26
+    research_governance_min_oos: int = 500
+    research_governance_min_folds: int = 3
+    research_governance_min_winning_fold_ratio: float = 0.67
+    research_governance_max_drawdown_r: float = 15
+    auto_promotion: bool = False
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     telegram_bot_token: str | None = Field(default=None, repr=False)

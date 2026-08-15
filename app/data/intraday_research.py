@@ -128,6 +128,9 @@ class IntradayResearchBackfill:
                 "failures": failures,
             }
             _, inserted, duplicates = self.repository.import_dataset(bars, manifest, manifest)
+            if timeframe == Timeframe.M5:
+                persisted_at = datetime.now(UTC)
+                self.record_many_5m_availability(bars, persisted_at)
         return BackfillResult(
             timeframe.value,
             len(symbols),
@@ -164,6 +167,46 @@ class IntradayResearchBackfill:
             return True
         except IntegrityError:
             return False
+
+    def record_many_5m_availability(self, bars: Sequence[Any], persist_time: datetime) -> int:
+        with self.session_factory() as session:
+            keys = {
+                (symbol, stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp)
+                for symbol, stamp in session.execute(
+                    select(
+                        DataFreshnessObservationRow.symbol,
+                        DataFreshnessObservationRow.bar_close_time,
+                    ).where(DataFreshnessObservationRow.timeframe == "5m")
+                ).all()
+            }
+        inserted = 0
+        with self.session_factory.begin() as session:
+            for bar in bars:
+                close_time = bar.timestamp + timedelta(minutes=5)
+                if (bar.symbol, close_time) in keys or close_time > bar.received_at:
+                    continue
+                session.add(
+                    DataFreshnessObservationRow(
+                        provider_id=self.provider.metadata.provider_id,
+                        symbol=bar.symbol,
+                        timeframe="5m",
+                        bar_close_time=close_time,
+                        provider_available_time=bar.received_at,
+                        persist_time=max(persist_time, bar.received_at),
+                        metadata_json={
+                            "source": "provider_observation",
+                            "research_only": True,
+                            "provider_latency_seconds": (
+                                bar.received_at - close_time
+                            ).total_seconds(),
+                            "total_latency_seconds": (
+                                max(persist_time, bar.received_at) - close_time
+                            ).total_seconds(),
+                        },
+                    )
+                )
+                inserted += 1
+        return inserted
 
     def latency_report(self) -> dict[str, object]:
         with self.session_factory() as session:

@@ -46,6 +46,7 @@ from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
 from app.paper.repository import PaperTradeRepository
+from app.research.governance import EvidenceRepository
 from app.universe.service import UniverseRepository
 
 
@@ -68,6 +69,7 @@ intraday_repository = IntradayRepository()
 signal_intelligence = SignalIntelligence()
 adaptive_decisions = AdaptiveDecisionService()
 intraday_research = IntradayResearchBackfill()
+evidence_repository = EvidenceRepository()
 universe_repository = UniverseRepository()
 
 
@@ -331,6 +333,40 @@ def research_status() -> dict[str, object]:
         "five_minute_latency": intraday_research.latency_report(),
         "notice": "Bu bölüm Radar kararını etkilemez.",
     }
+
+
+@app.get("/research/evidence")
+def research_evidence() -> dict[str, object]:
+    return evidence_repository.evidence_status()
+
+
+@app.get("/research/daily")
+def research_daily(limit: int = 30) -> list[dict[str, object]]:
+    from app.database.base import DailyResearchSnapshotRow
+
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(DailyResearchSnapshotRow)
+            .order_by(DailyResearchSnapshotRow.session_date.desc())
+            .limit(min(max(limit, 1), 100))
+        ).all()
+    return [
+        {"session_date": row.session_date, "metrics": row.metrics, "deltas": row.deltas}
+        for row in rows
+    ]
+
+
+@app.get("/research/weekly")
+def research_weekly(limit: int = 12) -> list[dict[str, object]]:
+    from app.database.base import WeeklyResearchReportRow
+
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(WeeklyResearchReportRow)
+            .order_by(WeeklyResearchReportRow.week_start.desc())
+            .limit(min(max(limit, 1), 52))
+        ).all()
+    return [dict(row.payload) for row in rows]
 
 
 @app.get("/research/scan")
