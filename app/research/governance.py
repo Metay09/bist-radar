@@ -476,6 +476,8 @@ class EvidenceRepository:
         economic = (
             "INSUFFICIENT"
             if counts["mature_labels"] < settings.research_governance_min_oos
+            or sample < settings.research_governance_min_oos
+            or folds < settings.research_governance_min_folds
             else "NO"
         )
         health: list[dict[str, object]] = []

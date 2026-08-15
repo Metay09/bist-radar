@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     research_latency_min_completeness: float = 0.9
     research_latency_ready_p95_seconds: int = 180
     research_latency_degraded_p95_seconds: int = 300
+    research_latency_max_observation_age_minutes: int = 30
     research_retrain_min_new_labels: int = 50
     research_retrain_min_total_labels: int = 250
     research_retrain_min_elapsed_hours: int = 168

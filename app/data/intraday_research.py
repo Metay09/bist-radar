@@ -169,6 +169,7 @@ class IntradayResearchBackfill:
             return False
 
     def record_many_5m_availability(self, bars: Sequence[Any], persist_time: datetime) -> int:
+        max_age = timedelta(minutes=get_settings().research_latency_max_observation_age_minutes)
         with self.session_factory() as session:
             keys = {
                 (symbol, stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp)
@@ -183,7 +184,12 @@ class IntradayResearchBackfill:
         with self.session_factory.begin() as session:
             for bar in bars:
                 close_time = bar.timestamp + timedelta(minutes=5)
-                if (bar.symbol, close_time) in keys or close_time > bar.received_at:
+                observation_age = bar.received_at - close_time
+                if (
+                    (bar.symbol, close_time) in keys
+                    or observation_age < timedelta(0)
+                    or observation_age > max_age
+                ):
                     continue
                 session.add(
                     DataFreshnessObservationRow(

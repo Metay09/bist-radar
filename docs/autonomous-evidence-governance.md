@@ -39,6 +39,8 @@ dataset hash, code commit SHA, config/hyperparameters and random seed.
 Each persisted observation keeps symbol, bar close, first provider observation,
 persist time and provider/end-to-end latency. Daily evidence contains sample,
 coverage, missing, p50/p90/p95/p99.
+Historical backfill is never a latency observation; `latency-v1` accepts only bars
+first observed within 30 minutes of close.
 
 - `INSUFFICIENT`: no real observations;
 - `OBSERVING`: observations exist but fewer than 3 sessions or completeness below 90%;
