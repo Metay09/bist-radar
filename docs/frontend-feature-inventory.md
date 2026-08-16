@@ -23,3 +23,12 @@
 
 No financial formula, Radar score behavior, Adaptive state transition, outcome label,
 Shadow inference, or governance threshold is implemented or changed by this UI work.
+
+## Recorded technical debt
+
+- `frontend/src/App.tsx` remains an approximately 61 KB monolith. Page and
+  business-component extraction belongs in a future architecture milestone, not
+  this quality closeout.
+- `frontend/src/styles/legacy.css` remains the compatibility layer for existing
+  selectors. Consolidating it into the tokenized component styles belongs in a
+  future CSS architecture milestone.

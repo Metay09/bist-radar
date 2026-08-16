@@ -7,13 +7,16 @@ from app.database.base import (
     Base,
     DailyResearchSnapshotRow,
     DataFreshnessObservationRow,
+    MlExperimentRow,
     MlFeatureSnapshotRow,
+    MlModelRow,
     MlPredictionRow,
     ResearchCycleRow,
     ResearchDatasetVersionRow,
     ResearchLabelRow,
     SignalAuditRow,
     WeeklyResearchReportRow,
+    WorkerStateRow,
 )
 from app.research.cycle import AutonomousResearchCycle
 from app.research.governance import (
@@ -216,3 +219,135 @@ def test_retrain_policy_maturity_and_multi_metric_promotion_gate() -> None:
     }
     assert promotion_candidate(passing) is True
     assert promotion_candidate(passing | {"calibrated": False}) is False
+
+
+def test_retrain_policy_enforces_new_label_and_elapsed_time_gates() -> None:
+    sessions = _sessions()
+    now = datetime(2026, 8, 14, 15, tzinfo=UTC)
+    with sessions.begin() as session:
+        session.add_all(
+            ResearchLabelRow(
+                signal_id=f"label-{index}",
+                policy_version="adaptive-v1",
+                terminal_at=now,
+                created_at=now,
+                cost_adjusted_r=0.1,
+                labels={"entry": True},
+                trace={},
+            )
+            for index in range(250)
+        )
+        session.add(
+            MlModelRow(
+                model_id="recent-model",
+                created_at=now - timedelta(hours=1),
+                model_type="logistic",
+                metadata_json={"sample_count": 250},
+            )
+        )
+    repository = EvidenceRepository(sessions)
+    decision = repository.retrain_decision(now)
+    assert decision.reason == "MINIMUM_NEW_LABELS"
+    with sessions.begin() as session:
+        model = session.get(MlModelRow, "recent-model")
+        assert model is not None
+        model.metadata_json = {"sample_count": 200}
+    decision = repository.retrain_decision(now)
+    assert decision.reason == "MINIMUM_ELAPSED_TIME"
+    decision = repository.retrain_decision(now + timedelta(days=8))
+    assert decision.eligible is True
+    assert decision.reason == "ELIGIBLE"
+
+
+def test_latency_maturity_ready_and_degraded_are_policy_driven(monkeypatch) -> None:
+    sessions = _sessions()
+    now = datetime(2026, 8, 14, 15, tzinfo=UTC)
+    with sessions.begin() as session:
+        for day, latency in ((0, 60), (1, 90), (2, 120)):
+            close = now - timedelta(days=day)
+            session.add(
+                DataFreshnessObservationRow(
+                    provider_id="yfinance-research",
+                    symbol="THYAO",
+                    timeframe="5m",
+                    bar_close_time=close,
+                    provider_available_time=close + timedelta(seconds=latency),
+                    persist_time=close + timedelta(seconds=latency + 5),
+                    metadata_json={"research_only": True},
+                )
+            )
+    from app.core.config import get_settings
+
+    settings = get_settings().model_copy(update={"research_latency_min_completeness": 0.001})
+    monkeypatch.setattr("app.research.governance.get_settings", lambda: settings)
+    repository = EvidenceRepository(sessions)
+    assert repository.latency_evidence()["maturity"] == "RESEARCH_READY"
+    with sessions.begin() as session:
+        rows = session.scalars(select(DataFreshnessObservationRow)).all()
+        for row in rows:
+            row.provider_available_time = row.bar_close_time + timedelta(seconds=400)
+    assert repository.latency_evidence()["maturity"] == "DEGRADED"
+
+
+def test_evidence_health_flags_label_stall_and_recent_model_degradation() -> None:
+    sessions = _sessions()
+    now = datetime(2026, 8, 14, 15, tzinfo=UTC)
+    with sessions.begin() as session:
+        session.add(
+            MlExperimentRow(
+                experiment_id="degraded-oos",
+                created_at=now,
+                data_hash="a" * 64,
+                feature_schema="intraday-v1",
+                policy_version="adaptive-v1",
+                model="logistic",
+                hyperparameters={},
+                date_ranges={},
+                prior_trials=1,
+                metrics={
+                    "oos_sample": 600,
+                    "folds": 4,
+                    "expected_r": -0.2,
+                    "max_drawdown_r": 20,
+                },
+            )
+        )
+        session.add(
+            MlModelRow(
+                model_id="shadow-degraded",
+                created_at=now,
+                model_type="logistic",
+                metadata_json={"sample_count": 600},
+            )
+        )
+        session.add_all(
+            [
+                DailyResearchSnapshotRow(
+                    session_date="2026-08-14",
+                    created_at=now,
+                    metrics={"signals": 20, "mature_outcomes": 5},
+                    deltas={},
+                ),
+                DailyResearchSnapshotRow(
+                    session_date="2026-08-13",
+                    created_at=now - timedelta(days=1),
+                    metrics={"signals": 10, "mature_outcomes": 5},
+                    deltas={},
+                ),
+                WorkerStateRow(
+                    job_name="research_cycle",
+                    last_started_at=now,
+                    last_success_at=now,
+                    status="HEALTHY",
+                    detail={},
+                ),
+            ]
+        )
+    status = EvidenceRepository(sessions).evidence_status(now)
+    assert status["oos_sample"] == 600
+    assert status["walk_forward_folds"] == 4
+    assert status["model_status"] == "MODEL_DEGRADED"
+    health = {row["component"]: row for row in status["health"]}
+    assert health["label_growth"]["reason"] == "SIGNALS_GROWING_LABELS_NOT_GROWING"
+    assert health["model_degradation"]["status"] == "MODEL_DEGRADED"
+    assert health["research_cycle"]["status"] == "HEALTHY"
