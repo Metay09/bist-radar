@@ -996,6 +996,7 @@ function Stock() {
   const result = useLoad(() => api.detail(symbol), [symbol]);
   const results = useLoad(() => api.symbolResults(symbol), [symbol]);
   const shadow = useLoad(() => api.symbolShadow(symbol), [symbol]);
+  const latestShadow = useLoad(() => api.latestSymbolShadow(symbol), [symbol]);
   const [tab, setTab] = useState("summary");
   if (!result.data) return <State error={result.error} />;
   const d: Detail = result.data,
@@ -1011,6 +1012,7 @@ function Stock() {
         <div><span className="eyebrow">ŞİMDİKİ KARAR</span><h2>Karar: {planLabel(d.trade_plan)}</h2><p>{d.trade_plan.explanation?.[0] || "Plan bağlamı henüz oluşmadı."}</p></div>
         <div className="hero-score"><small>RADAR</small><strong>{c?.radar_score ?? "—"}</strong><span>{c ? trLabel(c.classification) : "Veri yok"}</span></div>
       </section>
+      <ShadowSecondOpinion data={latestShadow.data} error={latestShadow.error} />
       <div className={`fresh ${d.freshness.state.toLowerCase()}`}>
         {d.freshness.label}
       </div>
@@ -1142,6 +1144,64 @@ function Stock() {
         </section>
       )}
     </>
+  );
+}
+
+function ShadowSecondOpinion({
+  data,
+  error,
+}: {
+  data?: Record<string, unknown>;
+  error?: string;
+}) {
+  const prediction = data?.prediction as Record<string, unknown> | null | undefined;
+  const quality = (prediction?.head_quality || {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  const display = (head: string, key: string) => {
+    const value = prediction?.[key];
+    if (typeof value !== "number") return "—";
+    return quality[head]?.display === "PROBABILITY"
+      ? `%${trNumber(value * 100, 1)}`
+      : `Skor ${trNumber(value * 100, 0)}/100`;
+  };
+  const values = [
+    ["Alım", "entry", "entry_probability"],
+    ["Stop-before-H1", "stop", "stop_probability"],
+    ["H1", "h1", "h1_probability"],
+    ["H2 | H1", "h2", "h2_probability"],
+    ["H3 | H2", "h3", "h3_probability"],
+  ];
+  return (
+    <section className="shadow-second-opinion" aria-label="Shadow ikinci görüş">
+      <div className="shadow-second-head">
+        <div>
+          <span className="eyebrow">SHADOW · İKİNCİ GÖRÜŞ</span>
+          <h3>{prediction ? "Model görüşü" : "Model öğreniyor"}</h3>
+        </div>
+        <span className="tag blue">
+          {String(data?.model_maturity || "INSUFFICIENT")}
+        </span>
+      </div>
+      {error ? (
+        <p className="shadow-empty">Shadow verisine şu anda ulaşılamıyor.</p>
+      ) : !data ? (
+        <div className="shadow-mini-skeleton" aria-label="Shadow yükleniyor" />
+      ) : prediction ? (
+        <div className="shadow-values">
+          {values.map(([label, head, key]) => (
+            <div key={head}>
+              <small>{label}</small>
+              <strong>{display(head, key)}</strong>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="shadow-empty">Henüz yeterli veri yok · model öğreniyor.</p>
+      )}
+      <footer>Shadow yalnız ikinci görüş sağlar · Radar kararını değiştirmez.</footer>
+    </section>
   );
 }
 function Signals() {

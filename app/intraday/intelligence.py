@@ -379,3 +379,43 @@ class SignalIntelligence:
             "last_training_attempt": training.last_started_at if training else None,
             "last_successful_training": training.last_success_at if training else None,
         }
+
+    def latest_shadow_prediction(self, symbol: str) -> dict[str, object]:
+        """Return advisory output for the latest persisted signal only."""
+        with self.session_factory() as session:
+            signal = session.scalar(
+                select(MlFeatureSnapshotRow)
+                .where(MlFeatureSnapshotRow.symbol == symbol.upper())
+                .order_by(
+                    MlFeatureSnapshotRow.signal_time.desc(),
+                    MlFeatureSnapshotRow.signal_id.desc(),
+                )
+                .limit(1)
+            )
+            prediction = (
+                session.scalar(
+                    select(MlPredictionRow)
+                    .where(MlPredictionRow.signal_id == signal.signal_id)
+                    .order_by(MlPredictionRow.created_at.desc(), MlPredictionRow.id.desc())
+                    .limit(1)
+                )
+                if signal
+                else None
+            )
+            model = session.get(MlModelRow, prediction.model_id) if prediction else None
+        maturity = (
+            str(model.metadata_json.get("maturity", "INSUFFICIENT")) if model else "INSUFFICIENT"
+        )
+        return {
+            "mode": "SHADOW",
+            "radar_decision_effect": "NONE",
+            "allow_ml_to_change_radar": False,
+            "symbol": symbol.upper(),
+            "signal_id": signal.signal_id if signal else None,
+            "signal_time": signal.signal_time if signal else None,
+            "status": "AVAILABLE" if prediction else "LEARNING",
+            "model_id": prediction.model_id if prediction else None,
+            "model_maturity": maturity,
+            "prediction_created_at": prediction.created_at if prediction else None,
+            "prediction": dict(prediction.predictions) if prediction else None,
+        }

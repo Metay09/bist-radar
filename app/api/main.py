@@ -577,6 +577,11 @@ def symbol_shadow_status(symbol: str) -> dict[str, object]:
     return signal_intelligence.shadow_status(symbol)
 
 
+@app.get("/symbols/{symbol}/latest-shadow-prediction")
+def symbol_latest_shadow_prediction(symbol: str) -> dict[str, object]:
+    return signal_intelligence.latest_shadow_prediction(symbol)
+
+
 @app.get("/shadow/status")
 def shadow_status() -> dict[str, object]:
     return signal_intelligence.shadow_status()

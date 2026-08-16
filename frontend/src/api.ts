@@ -27,6 +27,8 @@ export const api = {
   symbolResults: (s: string) => get<Signal[]>(`/symbols/${s}/results`),
   symbolShadow: (s: string) =>
     get<Record<string, unknown>>(`/symbols/${s}/shadow-status`),
+  latestSymbolShadow: (s: string) =>
+    get<Record<string, unknown>>(`/symbols/${s}/latest-shadow-prediction`),
   outcomes: () => get<Outcome[]>("/signals/outcomes"),
   trades: () => get<PaperTrade[]>("/paper/trades"),
   performance: () => get<Record<string, unknown>>("/performance/summary"),

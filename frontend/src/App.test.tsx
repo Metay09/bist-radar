@@ -104,7 +104,13 @@ beforeEach(() => {
                   closed_trades: 0,
                   mtm_equity: null,
                 }
-              : url.includes("/symbols/")
+              : url.includes("latest-shadow-prediction")
+                ? {
+                    status: "LEARNING",
+                    model_maturity: "INSUFFICIENT",
+                    prediction: null,
+                  }
+                : url.includes("/symbols/")
                 ? detail
                 : url.includes("trade-plans")
                   ? [plan]
@@ -188,6 +194,63 @@ describe("dashboard UX", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "GRAFİK" }));
     expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();
+  });
+  it("shows calibrated Shadow heads as probability and keeps uncalibrated heads as score", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(
+              url.includes("latest-shadow-prediction")
+                ? {
+                    status: "AVAILABLE",
+                    signal_id: "latest-signal",
+                    model_maturity: "EARLY",
+                    prediction: {
+                      entry_probability: 0.812,
+                      stop_probability: 0.27,
+                      h1_probability: 0.64,
+                      h2_probability: 0.42,
+                      h3_probability: 0.2,
+                      head_quality: {
+                        entry: { display: "PROBABILITY" },
+                        h1: { display: "PROBABILITY" },
+                      },
+                    },
+                  }
+                : url.includes("/detail")
+                  ? detail
+                  : {},
+            ),
+        }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={["/symbol/ASELS"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("%81,2")).toBeInTheDocument();
+    expect(screen.getByText("%64,0")).toBeInTheDocument();
+    expect(screen.getByText("Skor 27/100")).toBeInTheDocument();
+    expect(screen.getByText("EARLY")).toBeInTheDocument();
+    expect(screen.getByText(/Radar kararını değiştirmez/)).toBeInTheDocument();
+    expect(screen.getByText("91")).toBeInTheDocument();
+  });
+  it("shows an honest learning state when the latest signal has no prediction", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    render(
+      <MemoryRouter initialEntries={["/symbol/ASELS"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText(/Henüz yeterli veri yok · model öğreniyor/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/%0,0/)).not.toBeInTheDocument();
   });
   it("renders signal mobile cards and contextual help", async () => {
     localStorage.setItem("bist-radar-tour-seen", "1");
