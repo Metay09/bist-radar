@@ -403,8 +403,18 @@ class SignalIntelligence:
                 else None
             )
             model = session.get(MlModelRow, prediction.model_id) if prediction else None
-        maturity = (
-            str(model.metadata_json.get("maturity", "INSUFFICIENT")) if model else "INSUFFICIENT"
+        raw_maturity = (
+            str(model.metadata_json.get("maturity", "INSUFFICIENT")).upper()
+            if model
+            else "INSUFFICIENT"
+        )
+        maturity = next(
+            (
+                state
+                for state in ("MATURE", "MODERATE", "EARLY", "EXPERIMENTAL")
+                if state in raw_maturity
+            ),
+            "INSUFFICIENT",
         )
         return {
             "mode": "SHADOW",

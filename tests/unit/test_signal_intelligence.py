@@ -148,7 +148,7 @@ def test_latest_shadow_prediction_matches_latest_signal_without_changing_radar()
                 model_id="shadow-v2",
                 created_at=now,
                 model_type="logistic",
-                metadata_json={"maturity": "EARLY"},
+                metadata_json={"maturity": "EARLY_SAMPLE"},
             )
         )
         session.add_all(
