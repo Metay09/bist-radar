@@ -25,6 +25,10 @@
 .candidate-action small { color:var(--muted); font-weight:800; letter-spacing:.08em; }
 .quick-levels { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
 .quick-levels .plan-metric { background:#07131d; border:1px solid var(--border); border-radius:12px; padding:10px; }
+.plan-level-skeleton > span { min-height:54px; padding:9px; background:#07131d; border:1px solid var(--border); border-radius:12px; }
+.plan-level-skeleton small { display:block; color:var(--muted); font-size:.65rem; }
+.plan-level-skeleton i { display:block; width:78%; height:11px; margin-top:9px; border-radius:5px; background:linear-gradient(90deg,var(--surface-raised),#26394a,var(--surface-raised)); background-size:200% 100%; animation:pulse 1.4s infinite; }
+.plan-level-error { margin-top:12px; padding:11px; color:var(--muted); background:#07131d; border:1px solid var(--border); border-radius:12px; font-size:.78rem; }
 .sort-control { display:flex; justify-content:flex-end; align-items:center; gap:10px; color:var(--muted); margin:12px 0; }
 .sort-control select { min-height:44px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:0 36px 0 12px; }
 .tracking-groups { display:grid; gap:16px; }

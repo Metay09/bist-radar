@@ -83,6 +83,9 @@ const planLabel = (plan?: TradePlan) => {
     }[plan.status] || trLabel(plan.status)
   );
 };
+const sameSnapshot = (candidateTimestamp?: string, planTimestamp?: string) =>
+  !candidateTimestamp ||
+  (!!planTimestamp && Date.parse(candidateTimestamp) === Date.parse(planTimestamp));
 const nav = [
   ["/", "radar", "Radar"],
   ["/tracking", "tracking", "Takip"],
@@ -134,21 +137,51 @@ const tourSteps = [
   ],
 ];
 
-function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
+type LoadOptions = { retryDelays?: number[] };
+
+function useLoad<T>(
+  load: () => Promise<T>,
+  deps: unknown[] = [],
+  options: LoadOptions = {},
+) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const retryDelays = options.retryDelays || [];
   useEffect(() => {
     let live = true;
-    load()
-      .then((x) => live && setData(x))
-      .catch(() => live && setError("Veri servisine ulaşılamıyor"));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    setLoading(true);
+    setError("");
+    const run = () => {
+      load()
+        .then((x) => {
+          if (!live) return;
+          setData(x);
+          setError("");
+          setLoading(false);
+        })
+        .catch(() => {
+          if (!live) return;
+          const delay = retryDelays[attempt++];
+          if (delay != null) timer = setTimeout(run, delay);
+          else {
+            setError("Veri servisine ulaşılamıyor");
+            setLoading(false);
+          }
+        });
+    };
+    run();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
     // Custom hook callers define the reload boundary explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { data, error };
+  }, [...deps, reloadKey]);
+  return { data, error, loading, reload: () => setReloadKey((x) => x + 1) };
 }
 const badge = (c: string) =>
   c.includes("VERY")
@@ -472,7 +505,7 @@ function Radar() {
   const summary = useLoad(api.summary);
   const universe = useLoad(api.universe);
   const rows = useLoad(api.candidates);
-  const plans = useLoad(api.tradePlans);
+  const plans = useLoad(api.tradePlans, [], { retryDelays: [1000, 3000] });
   const [query, setQuery] = useState(
     () => sessionStorage.getItem(radarState.query) || "",
   );
@@ -516,13 +549,14 @@ function Radar() {
         if (sort === "rvol") return b.rvol - a.rvol;
         if (sort === "momentum") return b.early_momentum_score - a.early_momentum_score;
         if (sort === "newest") return Date.parse(b.timestamp) - Date.parse(a.timestamp);
-        if (sort === "rr") return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
+        if (sort === "rr" && plans.data) return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
         if (sort === "distance") return Math.abs(a.breakout_distance) - Math.abs(b.breakout_distance);
+        if (sort === "priority" && !plans.data) return 0;
         const priorities: Record<string, number> = {BREAKOUT_ONAYI: 0, GIRIS_BOLGESINDE: 1, GIRIS_BEKLENIYOR: 2, KACMIS_KOVALAMA: 3, GECERSIZ: 4};
-        return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score;
+        return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol);
       });
     },
-    [rows.data, query, strength, sort, planMap],
+    [rows.data, query, strength, sort, planMap, plans.data],
   );
   if (!summary.data) return <State error={summary.error} />;
   const s = summary.data;
@@ -574,7 +608,7 @@ function Radar() {
                 text="0–100 bileşik karar-destek puanıdır; otomatik alım değildir."
               />
             </h2>
-            <p>Aksiyon önceliğine göre karar listesi</p>
+            <p>{plans.data ? "Aksiyon önceliğine göre karar listesi" : "Planlar hazır olana kadar Radar sırası korunuyor"}</p>
           </div>
           <input
             aria-label="Sembol ara"
@@ -614,7 +648,11 @@ function Radar() {
         {rows.error ? (
           <State error={rows.error} />
         ) : filtered.length ? (
-          <CandidateList rows={filtered} plans={planMap} />
+          <CandidateList
+            rows={filtered}
+            plans={planMap}
+            planState={plans.error ? "error" : plans.loading ? "loading" : "ready"}
+          />
         ) : (
           <State empty />
         )}
@@ -626,9 +664,11 @@ function Radar() {
 function CandidateList({
   rows,
   plans = {},
+  planState,
 }: {
   rows: Candidate[];
   plans?: Record<string, TradePlan>;
+  planState: "loading" | "ready" | "error";
 }) {
   const remember = () =>
     sessionStorage.setItem(radarState.scroll, String(window.scrollY));
@@ -674,7 +714,7 @@ function CandidateList({
                 <td>{trNumber(x.rvol)}x</td>
                 <td>{x.early_momentum_score}</td>
                 <td>
-                  <PlanBadge plan={plans[x.symbol]} />
+                  <PlanBadge plan={plans[x.symbol]} state={planState} candidateTimestamp={x.timestamp} />
                 </td>
                 <td>{trDate(x.timestamp)}</td>
               </tr>
@@ -718,13 +758,16 @@ function CandidateList({
                   <b>{x.early_momentum_score}</b>
                 </span>
               </div>
-              <div className="candidate-action"><small>ŞİMDİKİ AKSİYON</small><PlanBadge plan={plan} /></div>
-              {plan?.entry_zone_low != null && <div className="quick-levels">
+              <div className="candidate-action"><small>ŞİMDİKİ AKSİYON</small><PlanBadge plan={plan} state={planState} candidateTimestamp={x.timestamp} /></div>
+              {planState === "loading" && <PlanLevelSkeleton />}
+              {planState === "ready" && !plan && <PlanLevelSkeleton updating />}
+              {planState === "error" && <div className="plan-level-error">Plan geçici olarak kullanılamıyor</div>}
+              {planState === "ready" && sameSnapshot(x.timestamp, plan?.timestamp) && plan?.entry_zone_low != null && <div className="quick-levels">
                 <Metric label="ALIM" value={`${trNumber(plan.entry_zone_low)}–${trNumber(plan.entry_zone_high!)}`} />
                 <Metric label="STOP" value={trNumber(plan.stop_price!)} tone="stop" />
                 <Metric label="H1" value={plan.targets?.[0] ? trNumber(plan.targets[0].price) : "—"} tone="target" />
               </div>}
-              {plan?.entry_zone_low != null && (
+              {planState === "ready" && sameSnapshot(x.timestamp, plan?.timestamp) && plan?.entry_zone_low != null && (
                 <details>
                   <summary>İşlem planını göster</summary>
                   <dl>
@@ -753,12 +796,28 @@ function CandidateList({
     </>
   );
 }
-function PlanBadge({ plan }: { plan?: TradePlan }) {
+function PlanLevelSkeleton({ updating = false }: { updating?: boolean }) {
+  return <div className="quick-levels plan-level-skeleton" aria-label={updating ? "Plan güncelleniyor" : "Plan seviyeleri yükleniyor"}>
+    {["ALIM", "STOP", "H1"].map((label) => <span key={label}><small>{label}</small><i /></span>)}
+  </div>;
+}
+
+function PlanBadge({
+  plan,
+  state = "ready",
+  candidateTimestamp,
+}: {
+  plan?: TradePlan;
+  state?: "loading" | "ready" | "error";
+  candidateTimestamp?: string;
+}) {
+  if (state === "loading") return <span className="tag neutral plan-pending">Plan yükleniyor…</span>;
+  if (state === "error") return <span className="tag neutral plan-unavailable">Plan verisi alınamadı</span>;
+  if (!plan || !sameSnapshot(candidateTimestamp, plan.timestamp))
+    return <span className="tag neutral plan-pending">Plan güncelleniyor</span>;
   return plan ? (
     <span className={`tag ${planTone(plan.status)}`}>{planLabel(plan)}</span>
-  ) : (
-    <span className="tag neutral">İşlem Uygun Değil</span>
-  );
+  ) : null;
 }
 
 function TradePlanCard({ plan }: { plan: TradePlan }) {

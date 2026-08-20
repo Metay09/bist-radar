@@ -130,7 +130,10 @@ beforeEach(() => {
     ),
   );
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("dashboard UX", () => {
   it("renders mobile bottom nav and desktop sidebar landmarks", async () => {
@@ -336,5 +339,70 @@ describe("dashboard UX", () => {
         screen.getByText(/Veri servisine ulaşılamıyor/),
       ).toBeInTheDocument(),
     );
+  });
+  it("keeps the financial verdict pending until a delayed plan arrives", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    let releasePlan!: () => void;
+    const delayed = new Promise<void>((resolve) => { releasePlan = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("trade-plans")) {
+        await delayed;
+        return { ok: true, json: async () => [{ ...plan, stale: false, market_closed: false }] };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("ASELS")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plan yükleniyor…").length).toBeGreaterThan(0);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("Plan seviyeleri yükleniyor").length).toBeGreaterThan(0);
+    releasePlan();
+    expect((await screen.findAllByText("Kırılım Gerçekleşti")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("198,00–201,00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("194,00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("209,00").length).toBeGreaterThan(0);
+  });
+  it("retries a failed plan request and recovers without a false invalid verdict", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.useFakeTimers();
+    let planCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("trade-plans")) {
+        planCalls += 1;
+        if (planCalls === 1) return { ok: false, status: 502 };
+        return { ok: true, json: async () => [{ ...plan, stale: false, market_closed: false }] };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(planCalls).toBe(2);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Kırılım Gerçekleşti").length).toBeGreaterThan(0);
+  });
+  it("keeps candidates usable and reports a permanent plan failure", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.useFakeTimers();
+    let planCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("trade-plans")) { planCalls += 1; return { ok: false, status: 503 }; }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(planCalls).toBe(3);
+    expect(screen.getAllByText("ASELS").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plan verisi alınamadı").length).toBeGreaterThan(0);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+  });
+  it("shows invalid only when the backend explicitly returns GECERSIZ", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const invalid = { ...plan, status: "GECERSIZ", stale: false, market_closed: false };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes("trade-plans") ? [invalid] : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
+    })));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("İşlem Uygun Değil")).length).toBeGreaterThan(0);
   });
 });
