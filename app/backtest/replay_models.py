@@ -3,6 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from app.market.bist import TickDirection, canonical_bist_symbol, round_to_tick
+
 
 class Timeframe(StrEnum):
     D1 = "1d"
@@ -57,6 +59,15 @@ class ExecutionOrder:
     data_quality: int
     state: ExecutionState = ExecutionState.SIGNAL_CREATED
     rejection_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        self.symbol = canonical_bist_symbol(self.symbol)
+        self.expected_entry = round_to_tick(self.expected_entry, TickDirection.CEIL)
+        self.stop = round_to_tick(self.stop, TickDirection.FLOOR)
+        self.target_1 = round_to_tick(self.target_1, TickDirection.FLOOR)
+        self.target_2 = round_to_tick(self.target_2, TickDirection.FLOOR)
+        if not self.stop < self.expected_entry < self.target_1 < self.target_2:
+            raise ValueError("tick normalization produced invalid execution order")
 
     def transition(self, target: ExecutionState) -> None:
         if target not in TRANSITIONS[self.state]:

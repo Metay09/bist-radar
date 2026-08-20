@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -114,6 +114,12 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
     assert detail["trade_plan"]["status"] == "BREAKOUT_ONAYI"
     assert len(detail["trade_plan"]["targets"]) == 3
     assert dashboard.dashboard_trade_plans()[0]["symbol"] == "ASELS"
+    opportunities = dashboard.dashboard_opportunities()
+    assert opportunities["snapshot_id"]
+    opportunity = opportunities["opportunities"][0]
+    assert (
+        dashboard._candidate_timestamp(opportunity["candidate"]) == opportunity["plan"]["timestamp"]
+    )
     assert dashboard.trade_plan("NONE")["status"] == "GECERSIZ"
     assert dashboard.symbol_detail("NONE") is None
     assert dashboard.signal_history(symbol="ASELS")[0]["lifecycle"] == "OUTCOME_PENDING"
@@ -134,6 +140,91 @@ def test_candidates_are_unique_newest_and_deterministically_ranked(monkeypatch) 
     rows = dashboard.candidates()
     assert [row["symbol"] for row in rows] == ["ASELS", "ASTOR"]
     assert rows[1]["radar_score"] == 80
+
+
+def test_candidates_merge_provider_aliases_and_strategies(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    stamp = "2026-08-13T10:15:00+00:00"
+    raw = [
+        {"symbol": "SELEC.IS", "radar_score": 80, "timestamp": stamp, "strategy_id": "breakout"},
+        {"symbol": "selec", "radar_score": 82, "timestamp": stamp, "strategy_id": "momentum"},
+    ]
+
+    class Reports:
+        def latest_report(self, _: str, **__: object):
+            return {"candidates": raw}
+
+    monkeypatch.setattr(dashboard, "ResearchRepository", Reports)
+    rows = dashboard.candidates()
+    assert len(rows) == 1 and rows[0]["symbol"] == "SELEC"
+    assert rows[0]["radar_score"] == 82
+    assert rows[0]["matched_strategies"] == ["breakout", "momentum"]
+
+
+def test_actionable_candidate_ranks_before_higher_waiting_score(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    rows = [
+        {
+            "symbol": "WAIT",
+            "radar_score": 94,
+            "timestamp": "2026-08-13T10:15:00+00:00",
+            "action_state": "GIRIS_BEKLENIYOR",
+        },
+        {
+            "symbol": "READY",
+            "radar_score": 81,
+            "timestamp": "2026-08-13T10:15:00+00:00",
+            "action_state": "GIRIS_BOLGESINDE",
+        },
+    ]
+
+    class Reports:
+        def latest_report(self, _: str, **__: object):
+            return {"candidates": rows}
+
+    monkeypatch.setattr(dashboard, "ResearchRepository", Reports)
+    assert [row["symbol"] for row in dashboard.candidates()] == ["READY", "WAIT"]
+
+
+def test_opportunity_plans_use_one_bounded_bar_query(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    db = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(db)
+    factory = sessionmaker(bind=db, expire_on_commit=False)
+    stamp = datetime.now(UTC)
+    with factory.begin() as session:
+        for symbol in ("ASELS", "TUPRS"):
+            for index in range(12):
+                session.add(
+                    MarketBarRow(
+                        symbol=symbol,
+                        timestamp=stamp.replace(microsecond=index + 1),
+                        open=99,
+                        high=101,
+                        low=98,
+                        close=100,
+                        volume=1000,
+                        timeframe="15m",
+                        provider_id="test",
+                    )
+                )
+    monkeypatch.setattr(dashboard, "SessionLocal", factory)
+    statements: list[str] = []
+    event.listen(
+        db, "before_cursor_execute", lambda _c, _u, statement, *_: statements.append(statement)
+    )
+    rows = [
+        {
+            "symbol": symbol,
+            "timestamp": stamp,
+            "price": 100,
+            "atr": 2,
+            "rvol": 2,
+            "breakout_distance": 0,
+        }
+        for symbol in ("ASELS", "TUPRS")
+    ]
+    plans = dashboard._plans_for_candidates(rows)
+    bar_selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert set(plans) == {"ASELS", "TUPRS"}
+    assert len(bar_selects) == 1
 
 
 def test_dashboard_performance_excludes_acceptance_context(monkeypatch) -> None:  # type: ignore[no-untyped-def]

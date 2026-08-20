@@ -94,7 +94,7 @@ async function mock(
       body = summary;
     } else if (u.includes("symbols/ASTOR/detail")) body = detail;
     else if (u.includes("dashboard/candidates")) body = candidates;
-    else if (u.includes("trade-plans")) body = [plan];
+    else if (u.includes("opportunities")) body = { snapshot_id: "s1", data_timestamp: candidate.timestamp, opportunities: [{ candidate, plan, snapshot_id: "s1", data_timestamp: candidate.timestamp }] };
     else if (u.includes("signals/history")) body = [candidate];
     else if (u.includes("performance/summary"))
       body = {

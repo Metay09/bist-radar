@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app.backtest.replay_models import Timeframe
 from app.data.canonical import CanonicalBar
@@ -101,10 +102,24 @@ def test_incremental_update_duplicate_and_revision() -> None:
 def test_slot_rvol_and_fallback() -> None:
     data = frame(480)
     rvol, method = slot_relative_volume(data, 3)
-    assert method == "HISTORICAL_BAR_SLOT"
+    assert method == "INSUFFICIENT_DATA"
     assert rvol.notna().any()
     _, short_method = slot_relative_volume(data.iloc[:10], 20)
-    assert short_method == "ROLLING_FALLBACK"
+    assert short_method == "INSUFFICIENT_DATA"
+
+
+def test_slot_rvol_uses_same_istanbul_interval_and_positive_history() -> None:
+    index = pd.DatetimeIndex(
+        [pd.Timestamp(f"2026-01-{day:02d} 07:00:00", tz="UTC") for day in range(5, 11)]
+    )
+    data = pd.DataFrame({"volume": [100, 110, 90, 100, 100, 200]}, index=index)
+    rvol, method = slot_relative_volume(data)
+    assert method == "HISTORICAL_BAR_SLOT"
+    assert rvol.iloc[-1] == pytest.approx(2.0)
+
+    data.loc[index[1:5], "volume"] = 0
+    _, method = slot_relative_volume(data)
+    assert method == "INSUFFICIENT_DATA"
 
 
 def test_15m_scan_features_and_scores_are_bounded() -> None:

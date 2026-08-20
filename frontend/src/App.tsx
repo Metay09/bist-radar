@@ -505,7 +505,7 @@ function Radar() {
   const summary = useLoad(api.summary);
   const universe = useLoad(api.universe);
   const rows = useLoad(api.candidates);
-  const plans = useLoad(api.tradePlans, [], { retryDelays: [1000, 3000] });
+  const opportunities = useLoad(api.opportunities, [], { retryDelays: [1000, 3000] });
   const [query, setQuery] = useState(
     () => sessionStorage.getItem(radarState.query) || "",
   );
@@ -532,8 +532,8 @@ function Radar() {
       );
   }, [summary.data, rows.data]);
   const planMap = useMemo(() => Object.fromEntries(
-    (plans.data || []).map((x) => [x.symbol, x]),
-  ), [plans.data]);
+    (opportunities.data?.opportunities || []).map((x) => [x.plan.symbol, x.plan]),
+  ), [opportunities.data]);
   const filtered = useMemo(
     () => {
       const result = [...(rows.data || [])]
@@ -549,14 +549,14 @@ function Radar() {
         if (sort === "rvol") return b.rvol - a.rvol;
         if (sort === "momentum") return b.early_momentum_score - a.early_momentum_score;
         if (sort === "newest") return Date.parse(b.timestamp) - Date.parse(a.timestamp);
-        if (sort === "rr" && plans.data) return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
+        if (sort === "rr" && opportunities.data) return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
         if (sort === "distance") return Math.abs(a.breakout_distance) - Math.abs(b.breakout_distance);
-        if (sort === "priority" && !plans.data) return 0;
+        if (sort === "priority" && !opportunities.data) return 0;
         const priorities: Record<string, number> = {BREAKOUT_ONAYI: 0, GIRIS_BOLGESINDE: 1, GIRIS_BEKLENIYOR: 2, KACMIS_KOVALAMA: 3, GECERSIZ: 4};
         return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol);
       });
     },
-    [rows.data, query, strength, sort, planMap, plans.data],
+    [rows.data, query, strength, sort, planMap, opportunities.data],
   );
   if (!summary.data) return <State error={summary.error} />;
   const s = summary.data;
@@ -608,7 +608,7 @@ function Radar() {
                 text="0–100 bileşik karar-destek puanıdır; otomatik alım değildir."
               />
             </h2>
-            <p>{plans.data ? "Aksiyon önceliğine göre karar listesi" : "Planlar hazır olana kadar Radar sırası korunuyor"}</p>
+            <p>{opportunities.data ? "Aksiyon önceliğine göre karar listesi" : "Planlar hazır olana kadar Radar sırası korunuyor"}</p>
           </div>
           <input
             aria-label="Sembol ara"
@@ -651,7 +651,7 @@ function Radar() {
           <CandidateList
             rows={filtered}
             plans={planMap}
-            planState={plans.error ? "error" : plans.loading ? "loading" : "ready"}
+            planState={opportunities.error ? "error" : opportunities.loading ? "loading" : "ready"}
           />
         ) : (
           <State empty />

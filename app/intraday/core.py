@@ -1,7 +1,9 @@
+import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from math import floor
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -12,6 +14,7 @@ from app.scoring.radar import signal_class
 
 FEATURE_SCHEMA_VERSION = "intraday-v1"
 STRATEGY_ID = "radar-intraday-v1"
+log = logging.getLogger(__name__)
 
 
 def stage_a_eligible(frame: pd.DataFrame, minimum_history: int = 50) -> tuple[bool, str]:
@@ -66,6 +69,11 @@ class IntradaySnapshot:
     data_quality: float
     provider_latency_seconds: float
     early_momentum_score: int
+    score_components: dict[str, int] | None = None
+    rvol_sample_size: int = 0
+    rvol_baseline: float | None = None
+    rvol_quality: str = "INSUFFICIENT_DATA"
+    rvol_is_outlier: bool = False
     feature_schema_version: str = FEATURE_SCHEMA_VERSION
     strategy_id: str = STRATEGY_ID
 
@@ -117,21 +125,33 @@ def provider_latency(timestamps: list[datetime], received_at: datetime) -> dict[
     }
 
 
-def slot_relative_volume(frame: pd.DataFrame, lookback_days: int = 20) -> tuple[pd.Series, str]:
-    slots = pd.Series(frame.index.strftime("%H:%M"), index=frame.index)
+def _slot_rvol_details(
+    frame: pd.DataFrame, lookback_days: int = 20, minimum_samples: int = 5
+) -> tuple[pd.Series, pd.Series, pd.Series, str]:
+    local_index = frame.index.tz_localize("UTC") if frame.index.tz is None else frame.index
+    local_index = local_index.tz_convert(ZoneInfo("Europe/Istanbul"))
+    slots = pd.Series(local_index.strftime("%H:%M"), index=frame.index)
     result = pd.Series(np.nan, index=frame.index, dtype=float)
-    enough = False
+    samples = pd.Series(0, index=frame.index, dtype=int)
+    baselines = pd.Series(np.nan, index=frame.index, dtype=float)
     for slot in slots.unique():
         indexes = slots[slots == slot].index
-        history = frame.loc[indexes, "volume"].shift(1).rolling(lookback_days).mean()
-        result.loc[indexes] = frame.loc[indexes, "volume"] / history.replace(0, np.nan)
-        enough = enough or bool(history.notna().any())
-    if enough:
-        return result, "HISTORICAL_BAR_SLOT"
-    fallback = frame.volume / frame.volume.shift(1).rolling(20, min_periods=5).mean().replace(
-        0, np.nan
-    )
-    return fallback, "ROLLING_FALLBACK"
+        values = frame.loc[indexes, "volume"].astype(float)
+        positive = values.where(values > 0)
+        baseline = (
+            positive.shift(1)
+            .rolling(lookback_days, min_periods=min(minimum_samples, lookback_days))
+            .mean()
+        )
+        count = positive.shift(1).rolling(lookback_days, min_periods=1).count().astype(int)
+        baselines.loc[indexes], samples.loc[indexes] = baseline, count
+        result.loc[indexes] = values / baseline
+    return result, samples, baselines, "HISTORICAL_BAR_SLOT"
+
+
+def slot_relative_volume(frame: pd.DataFrame, lookback_days: int = 20) -> tuple[pd.Series, str]:
+    result, samples, _, method = _slot_rvol_details(frame, lookback_days)
+    return result, method if int(samples.max()) >= 5 else "INSUFFICIENT_DATA"
 
 
 def intraday_features(frame: pd.DataFrame) -> dict[str, float]:
@@ -146,7 +166,7 @@ def intraday_features(frame: pd.DataFrame) -> dict[str, float]:
     cumulative_value = (typical * volume).groupby(session).cumsum()
     cumulative_volume = volume.groupby(session).cumsum().replace(0, np.nan)
     session_vwap = cumulative_value / cumulative_volume
-    rvol, method = slot_relative_volume(frame)
+    rvol, rvol_samples, rvol_baselines, method = _slot_rvol_details(frame)
     prior_high = frame.high.shift(1).rolling(20).max()
     previous_day_high = frame.high.groupby(session).max().shift(1)
     prior_day = session.map(previous_day_high)
@@ -157,7 +177,11 @@ def intraday_features(frame: pd.DataFrame) -> dict[str, float]:
         "rsi": float(rsi(close).iloc[last]),
         "macd": float(mac.macd.iloc[last]),
         "macd_histogram": float(mac.histogram.iloc[last]),
-        "rvol": float(rvol.iloc[last]) if pd.notna(rvol.iloc[last]) else 1.0,
+        "rvol": float(rvol.iloc[last]) if pd.notna(rvol.iloc[last]) else 0.0,
+        "rvol_sample_size": float(rvol_samples.iloc[last]),
+        "rvol_baseline": (
+            float(rvol_baselines.iloc[last]) if pd.notna(rvol_baselines.iloc[last]) else 0.0
+        ),
         "atr": float(atr(frame).iloc[last]),
         "vwap_distance": (price / float(session_vwap.iloc[last]) - 1) * 100,
         "ema9_distance": (price / float(e9.iloc[last]) - 1) * 100,
@@ -176,7 +200,7 @@ def intraday_features(frame: pd.DataFrame) -> dict[str, float]:
         "roc": float(roc(close, 4).iloc[last]),
         "rolling_volatility": float(rolling_volatility(close, 20).iloc[last]),
     }
-    values["rvol_method"] = 1.0 if method == "HISTORICAL_BAR_SLOT" else 0.0
+    values["rvol_method"] = 1.0 if rvol_samples.iloc[last] >= 5 else 0.0
     return values
 
 
@@ -193,18 +217,52 @@ def early_momentum_score(feature: dict[str, float]) -> int:
     return min(100, max(0, score))
 
 
-def intraday_radar_score(feature: dict[str, float]) -> int:
-    """Frozen v1 deterministic score; shadow predictions never enter this function."""
-    momentum = min(25, max(0, floor((feature["rsi"] - 35) / 2)))
+def intraday_score_components(feature: dict[str, float]) -> dict[str, int]:
+    """Setup-quality components; action/lifecycle state is deliberately absent."""
+    rsi_value = feature["rsi"]
+    momentum = max(0, min(20, floor((rsi_value - 35) / 1.75)))
+    if rsi_value > 75:  # extended momentum is not exceptional setup quality
+        momentum = max(8, momentum - floor((rsi_value - 75) / 2))
     trend = sum(
-        7 for key in ("ema9_distance", "ema20_distance", "ema50_distance") if feature[key] >= 0
+        6 for key in ("ema9_distance", "ema20_distance", "ema50_distance") if feature[key] >= 0
     )
-    volume = 25 if feature["rvol"] >= 2 else 18 if feature["rvol"] >= 1.5 else 10
-    breakout = (
-        18 if feature["breakout_distance"] >= 0 else 10 if feature["breakout_distance"] >= -1 else 2
+    rv = feature["rvol"]
+    volume = (
+        0
+        if feature.get("rvol_sample_size", 0) < 5
+        else (
+            18
+            if rv >= 5
+            else 16
+            if rv >= 3
+            else 14
+            if rv >= 2
+            else 11
+            if rv >= 1.5
+            else 6
+            if rv >= 1
+            else 2
+        )
     )
-    mac = 11 if feature["macd_histogram"] > 0 else 0
-    return min(100, max(0, momentum + trend + volume + breakout + mac))
+    distance = feature["breakout_distance"]
+    breakout = 14 if 0 <= distance <= 1 else 10 if -1 <= distance < 0 else 4
+    return {
+        "momentum": momentum,
+        "trend": trend,
+        "volume": volume,
+        "breakout": breakout,
+        "macd": 10 if feature["macd_histogram"] > 0 else 0,
+        "vwap_quality": 8
+        if 0 <= feature["vwap_distance"] <= 3
+        else 3
+        if feature["vwap_distance"] > 0
+        else 0,
+        "acceleration": 8 if feature["price_acceleration"] > 0 else 0,
+    }
+
+
+def intraday_radar_score(feature: dict[str, float]) -> int:
+    return min(100, max(0, sum(intraday_score_components(feature).values())))
 
 
 def scan_symbol(
@@ -218,11 +276,26 @@ def scan_symbol(
     daily_trend: str = "UNKNOWN",
 ) -> IntradaySnapshot:
     feature = intraday_features(frame)
+    if feature["rvol_sample_size"] < 5:
+        log.debug(
+            "insufficient_volume_baseline symbol=%s samples=%d",
+            symbol,
+            int(feature["rvol_sample_size"]),
+        )
+    elif feature["rvol"] > 15:
+        log.warning(
+            "rvol_outlier symbol=%s rvol=%.2f baseline=%.2f samples=%d",
+            symbol,
+            feature["rvol"],
+            feature["rvol_baseline"],
+            int(feature["rvol_sample_size"]),
+        )
     score = intraday_radar_score(feature) if data_quality >= 90 else 0
     timestamp = pd.Timestamp(frame.index[-1]).to_pydatetime()
     if timestamp.tzinfo is None:
         raise ValueError("naive timestamp rejected")
     classification: SignalClass = signal_class(score)
+    components = intraday_score_components(feature)
     return IntradaySnapshot(
         signal_id=f"{STRATEGY_ID}:{symbol}:{timestamp.isoformat()}",
         symbol=symbol,
@@ -235,7 +308,7 @@ def scan_symbol(
         macd=feature["macd"],
         macd_histogram=feature["macd_histogram"],
         rvol=feature["rvol"],
-        rvol_method=("HISTORICAL_BAR_SLOT" if feature["rvol_method"] else "ROLLING_FALLBACK"),
+        rvol_method=("HISTORICAL_BAR_SLOT" if feature["rvol_method"] else "INSUFFICIENT_DATA"),
         atr=feature["atr"],
         vwap_distance=feature["vwap_distance"],
         ema9_distance=feature["ema9_distance"],
@@ -250,4 +323,9 @@ def scan_symbol(
         data_quality=data_quality,
         provider_latency_seconds=(received_at - timestamp.astimezone(UTC)).total_seconds(),
         early_momentum_score=early_momentum_score(feature),
+        score_components=components,
+        rvol_sample_size=int(feature["rvol_sample_size"]),
+        rvol_baseline=feature["rvol_baseline"] or None,
+        rvol_quality="OK" if feature["rvol_sample_size"] >= 5 else "INSUFFICIENT_DATA",
+        rvol_is_outlier=feature["rvol"] > 15 and feature["rvol_sample_size"] >= 5,
     )

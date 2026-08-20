@@ -1,12 +1,15 @@
+import logging
 import shutil
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import desc, select, text
 
@@ -16,6 +19,7 @@ from app.api.dashboard import (
     candidates as dashboard_candidates,
 )
 from app.api.dashboard import (
+    dashboard_opportunities,
     dashboard_summary,
     dashboard_trade_plans,
     symbol_detail,
@@ -61,6 +65,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 configure_logging()
 settings = get_settings()
 app = FastAPI(title=settings.app_name, description=DISCLAIMER, lifespan=lifespan)
+request_log = logging.getLogger("app.api.latency")
+dashboard_latencies: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=500))
+
+
+@app.middleware("http")
+async def observe_dashboard_latency(request: Request, call_next: Any) -> Any:
+    started = perf_counter()
+    response = await call_next(request)
+    if request.url.path in {
+        "/dashboard/candidates",
+        "/dashboard/trade-plans",
+        "/dashboard/opportunities",
+    }:
+        elapsed_ms = (perf_counter() - started) * 1000
+        dashboard_latencies[request.url.path].append(elapsed_ms)
+        response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
+        request_log.info(
+            "dashboard_request path=%s status=%d latency_ms=%.1f",
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+    return response
+
+
 ledger = PaperLedger()
 paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
@@ -524,6 +553,26 @@ def dashboard_candidates_endpoint() -> list[dict[str, object]]:
 @app.get("/dashboard/trade-plans")
 def dashboard_trade_plans_endpoint() -> list[dict[str, object]]:
     return dashboard_trade_plans()
+
+
+@app.get("/dashboard/opportunities")
+def dashboard_opportunities_endpoint() -> dict[str, object]:
+    return dashboard_opportunities()
+
+
+@app.get("/dashboard/latency")
+def dashboard_latency_endpoint() -> dict[str, dict[str, float | int | None]]:
+    def stats(values: deque[float]) -> dict[str, float | int | None]:
+        ordered = sorted(values)
+        if not ordered:
+            return {"count": 0, "p50_ms": None, "p95_ms": None}
+        return {
+            "count": len(ordered),
+            "p50_ms": round(ordered[(len(ordered) - 1) // 2], 1),
+            "p95_ms": round(ordered[max(0, (len(ordered) * 95 + 99) // 100 - 1)], 1),
+        }
+
+    return {path.rsplit("/", 1)[-1]: stats(values) for path, values in dashboard_latencies.items()}
 
 
 @app.get("/symbols/{symbol}/trade-plan")

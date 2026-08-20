@@ -24,7 +24,7 @@ const summary = {
 async function commonRoute(page: import("@playwright/test").Page, planHandler: (route: import("@playwright/test").Route) => Promise<void>) {
   await page.route("**/api/**", async (route) => {
     const url = route.request().url();
-    if (url.includes("trade-plans")) return planHandler(route);
+    if (url.includes("opportunities")) return planHandler(route);
     const body = url.includes("dashboard/candidates") ? [candidate]
       : url.includes("dashboard/summary") ? summary : [];
     await route.fulfill({ json: body });
@@ -36,7 +36,7 @@ test("5 saniye geciken plan yanlış finansal karar üretmez", async ({ page }) 
   await page.setViewportSize({ width: 390, height: 844 });
   await commonRoute(page, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 5000));
-    await route.fulfill({ json: [plan] });
+    await route.fulfill({ json: { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan, snapshot_id: "s1", data_timestamp: stamp }] } });
   });
   await page.goto("/");
   await expect(page.getByText("TUPRS").last()).toBeVisible();
@@ -56,7 +56,7 @@ test("502 sonrası bounded retry planı sayfa yenilemeden getirir", async ({ pag
   await commonRoute(page, async (route) => {
     calls += 1;
     if (calls === 1) await route.fulfill({ status: 502, body: "bad gateway" });
-    else await route.fulfill({ json: [plan] });
+    else await route.fulfill({ json: { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan, snapshot_id: "s1", data_timestamp: stamp }] } });
   });
   await page.goto("/");
   await expect(page.getByText("İşlem Uygun Değil")).toHaveCount(0);

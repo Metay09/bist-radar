@@ -21,8 +21,8 @@
 | Product tour and paper-only notice | Global shell | Global shell | PRESERVED |
 | Back-navigation search/filter/scroll state | Radar session state | Radar session state | PRESERVED |
 
-No financial formula, Radar score behavior, Adaptive state transition, outcome label,
-Shadow inference, or governance threshold is implemented or changed by this UI work.
+The frontend implements no financial formula, Radar score behavior, Adaptive state transition,
+outcome label, Shadow inference, or governance threshold; those remain backend-owned.
 
 ## Recorded technical debt
 
@@ -32,3 +32,22 @@ Shadow inference, or governance threshold is implemented or changed by this UI w
 - `frontend/src/styles/legacy.css` remains the compatibility layer for existing
   selectors. Consolidating it into the tokenized component styles belongs in a
   future CSS architecture milestone.
+# Radar execution and ranking invariants
+
+- Backend trade-plan prices are executable BIST equity prices. Entry-zone low and stops
+  round down; entry-zone high and breakout triggers round up; targets round down so tick
+  conversion cannot improve advertised risk/reward. R/R is recomputed from these normalized
+  levels. The frontend only localizes the returned decimal value; it does not derive prices.
+- Radar Score measures setup quality, not immediate executability. `action_state` is evaluated
+  independently on every completed market update. Default ranking is action-first
+  (`BREAKOUT_ONAYI`, `GIRIS_BOLGESINDE`, waiting, chased, invalid), then proximity/freshness and
+  score. A READY 81 therefore ranks ahead of a WAITING 94.
+- Intraday RVOL is the completed 15-minute bar volume divided by the mean of up to 20 prior,
+  positive-volume observations for the same `Europe/Istanbul` session slot. At least five
+  observations are required. Insufficient history produces RVOL 0 with
+  `rvol_quality=INSUFFICIENT_DATA` and earns no volume score; it is never replaced by an
+  across-slot rolling average. `rvol_baseline`, `rvol_sample_size`, and `rvol_is_outlier` make
+  exceptional values auditable.
+- Candidate symbols are canonicalized (`SELEC.IS`, `BIST:SELEC` → `SELEC`) and merged before API
+  serialization. The deterministic winner is actionable first, then newest, score and data
+  confidence; all contributing strategy identifiers are retained in `matched_strategies`.

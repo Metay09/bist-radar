@@ -112,8 +112,8 @@ beforeEach(() => {
                   }
                 : url.includes("/symbols/")
                 ? detail
-                : url.includes("trade-plans")
-                  ? [plan]
+                : url.includes("opportunities")
+                  ? { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan, snapshot_id: "s1", data_timestamp: stamp }] }
                   : url.includes("summary")
                     ? summary
                     : url.includes("candidates")
@@ -345,9 +345,10 @@ describe("dashboard UX", () => {
     let releasePlan!: () => void;
     const delayed = new Promise<void>((resolve) => { releasePlan = resolve; });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("trade-plans")) {
+      if (url.includes("opportunities")) {
         await delayed;
-        return { ok: true, json: async () => [{ ...plan, stale: false, market_closed: false }] };
+        const currentPlan = { ...plan, stale: false, market_closed: false };
+        return { ok: true, json: async () => ({ snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: currentPlan, snapshot_id: "s1", data_timestamp: stamp }] }) };
       }
       return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
     }));
@@ -367,10 +368,11 @@ describe("dashboard UX", () => {
     vi.useFakeTimers();
     let planCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("trade-plans")) {
+      if (url.includes("opportunities")) {
         planCalls += 1;
         if (planCalls === 1) return { ok: false, status: 502 };
-        return { ok: true, json: async () => [{ ...plan, stale: false, market_closed: false }] };
+        const currentPlan = { ...plan, stale: false, market_closed: false };
+        return { ok: true, json: async () => ({ snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: currentPlan, snapshot_id: "s1", data_timestamp: stamp }] }) };
       }
       return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
     }));
@@ -385,7 +387,7 @@ describe("dashboard UX", () => {
     vi.useFakeTimers();
     let planCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("trade-plans")) { planCalls += 1; return { ok: false, status: 503 }; }
+      if (url.includes("opportunities")) { planCalls += 1; return { ok: false, status: 503 }; }
       return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
     }));
     render(<MemoryRouter><App /></MemoryRouter>);
@@ -400,9 +402,49 @@ describe("dashboard UX", () => {
     const invalid = { ...plan, status: "GECERSIZ", stale: false, market_closed: false };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
       ok: true,
-      json: async () => url.includes("trade-plans") ? [invalid] : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
+      json: async () => url.includes("opportunities") ? { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: invalid, snapshot_id: "s1", data_timestamp: stamp }] } : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
     })));
     render(<MemoryRouter><App /></MemoryRouter>);
     expect((await screen.findAllByText("İşlem Uygun Değil")).length).toBeGreaterThan(0);
+  });
+  it("activates deterministic priority sorting once after the coherent snapshot arrives", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const waiting = { ...candidate, symbol: "WAIT", radar_score: 94 };
+    const ready = { ...candidate, symbol: "READY", radar_score: 81 };
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("opportunities")) {
+        await delayed;
+        return { ok: true, json: async () => ({
+          snapshot_id: "sort-snapshot", data_timestamp: stamp,
+          opportunities: [
+            { candidate: waiting, plan: { ...plan, symbol: "WAIT", status: "GIRIS_BEKLENIYOR" }, snapshot_id: "sort-snapshot", data_timestamp: stamp },
+            { candidate: ready, plan: { ...plan, symbol: "READY", status: "GIRIS_BOLGESINDE" }, snapshot_id: "sort-snapshot", data_timestamp: stamp },
+          ],
+        }) };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [waiting, ready] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await screen.findAllByText("WAIT");
+    const symbols = () => Array.from(document.querySelectorAll(".mobile-signals .signal-card .card-link strong")).map((node) => node.textContent);
+    expect(symbols()).toEqual(["WAIT", "READY"]);
+    release();
+    await waitFor(() => expect(symbols()).toEqual(["READY", "WAIT"]));
+  });
+  it("suppresses an older unrelated plan snapshot", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const oldPlan = { ...plan, timestamp: "2026-08-13T09:45:00Z", stale: false };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes("opportunities")
+        ? { snapshot_id: "old", data_timestamp: oldPlan.timestamp, opportunities: [{ candidate, plan: oldPlan, snapshot_id: "old", data_timestamp: oldPlan.timestamp }] }
+        : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
+    })));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("Plan güncelleniyor")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("198,00–201,00")).not.toBeInTheDocument();
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
   });
 });

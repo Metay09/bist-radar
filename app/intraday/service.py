@@ -112,13 +112,28 @@ class IntradayResearchService:
                     settings.intraday_signal_upgrade_points,
                     plan,
                 )
-                candidates.append(snapshot.payload() | {"disposition": disposition})
+                candidates.append(
+                    snapshot.payload()
+                    | {
+                        "disposition": disposition,
+                        "action_state": plan.get("status", "GECERSIZ"),
+                        "risk_reward": plan.get("risk_reward"),
+                    }
+                )
 
-        def rank(row: dict[str, object]) -> tuple[int, str]:
+        action_priority = {
+            "BREAKOUT_ONAYI": 0,
+            "GIRIS_BOLGESINDE": 1,
+            "GIRIS_BEKLENIYOR": 2,
+            "KACMIS_KOVALAMA": 3,
+            "GECERSIZ": 4,
+        }
+
+        def rank(row: dict[str, object]) -> tuple[int, int, str]:
             score = row["radar_score"]
             if not isinstance(score, int):
                 raise ValueError("invalid radar score")
-            return -score, str(row["symbol"])
+            return action_priority.get(str(row.get("action_state")), 5), -score, str(row["symbol"])
 
         candidates.sort(key=rank)
         report: dict[str, object] = {

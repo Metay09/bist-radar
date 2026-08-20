@@ -18,6 +18,12 @@ export type Candidate = {
   breakout_distance: number;
   disposition: string;
   bist100_member?: boolean;
+  action_state?: string;
+  score_components?: Record<string, number>;
+  rvol_sample_size?: number;
+  rvol_baseline?: number | null;
+  rvol_quality?: string;
+  rvol_is_outlier?: boolean;
 };
 export type PositionSizing = {
   account_equity: number;
@@ -46,6 +52,17 @@ export type TradePlan = {
   market_closed?: boolean;
   research_only: boolean;
   position_sizing?: PositionSizing;
+};
+export type Opportunity = {
+  candidate: Candidate;
+  plan: TradePlan;
+  snapshot_id: string;
+  data_timestamp: string | null;
+};
+export type OpportunityReadModel = {
+  snapshot_id: string;
+  data_timestamp: string | null;
+  opportunities: Opportunity[];
 };
 export type Summary = {
   provider: string;

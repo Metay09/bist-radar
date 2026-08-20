@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from app.market.bist import TickDirection, round_to_tick
+
 POLICY_VERSION = "adaptive-v1-h1-partial-trailing"
 TERMINAL_PRE = {
     "CANCELLED_DECAY",
@@ -194,7 +196,7 @@ def evaluate_adaptive_setup(
             state, payload = pending_decision
             pending_decision = None
             if state == "ENTRY_ACTIVATED":
-                opening = float(row.open)
+                opening = float(round_to_tick(float(row.open), TickDirection.CEIL))
                 risk = opening - stop
                 if opening > high + max(risk, 0) * 0.5:
                     event(
@@ -311,7 +313,9 @@ def evaluate_adaptive_setup(
                     {"price": target},
                 )
                 if target_index == 1:
-                    tightened = max(active_stop, result.entry_price)
+                    tightened = float(
+                        round_to_tick(max(active_stop, result.entry_price), TickDirection.FLOOR)
+                    )
                     if tightened > active_stop:
                         active_stop = tightened
                         result.active_stop = active_stop
@@ -335,7 +339,9 @@ def evaluate_adaptive_setup(
         holding = index - entry_bar_index + 1
         if result.highest_target >= 1 and context["atr"] is not None:
             trail = float(context["close"] or result.entry_price) - 2 * float(context["atr"])
-            tightened = max(active_stop, min(trail, float(row.close)))
+            tightened = float(
+                round_to_tick(max(active_stop, min(trail, float(row.close))), TickDirection.FLOOR)
+            )
             if tightened > active_stop:
                 active_stop = tightened
                 result.active_stop = active_stop

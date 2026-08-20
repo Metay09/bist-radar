@@ -2,6 +2,7 @@ import type {
   Candidate,
   Detail,
   Outcome,
+  OpportunityReadModel,
   PaperTrade,
   Signal,
   Summary,
@@ -17,6 +18,7 @@ export const api = {
   universe: () => get<Record<string, unknown>>("/universe/summary"),
   candidates: () => get<Candidate[]>("/dashboard/candidates"),
   tradePlans: () => get<TradePlan[]>("/dashboard/trade-plans"),
+  opportunities: () => get<OpportunityReadModel>("/dashboard/opportunities"),
   tradePlan: (s: string) => get<TradePlan>(`/symbols/${s}/trade-plan`),
   detail: (s: string) => get<Detail>(`/symbols/${s}/detail`),
   adaptive: (s: string) =>
