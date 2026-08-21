@@ -1,0 +1,6 @@
+FROM mcr.microsoft.com/playwright:v1.55.1-noble
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+CMD ["npx", "playwright", "test", "e2e/responsive.spec.ts", "--reporter=line"]

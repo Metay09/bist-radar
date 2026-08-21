@@ -5,6 +5,7 @@ from enum import StrEnum
 from uuid import uuid4
 
 from app.backtest.replay_models import ExecutedTrade, ExecutionOrder, ExecutionState
+from app.market.bist import TickDirection, round_to_tick
 from app.risk.engine import position_size
 
 D = Decimal
@@ -62,7 +63,9 @@ class PaperExecutionEngine:
             order.transition(ExecutionState.REJECTED)
             order.rejection_reason = "REJECTED_PORTFOLIO_RISK"
             return None
-        fill = open_price * (1 + self.config.slippage_bps / D("10000"))
+        fill = round_to_tick(
+            open_price * (1 + self.config.slippage_bps / D("10000")), TickDirection.CEIL
+        )
         order.transition(ExecutionState.OPEN)
         return ExecutedTrade(
             order.signal_id,
@@ -111,7 +114,9 @@ class PaperExecutionEngine:
             reason, raw_fill = "TARGET_1", trade.target_1
         if raw_fill is None:
             return equity
-        fill = raw_fill * (1 - self.config.slippage_bps / D("10000"))
+        fill = round_to_tick(
+            raw_fill * (1 - self.config.slippage_bps / D("10000")), TickDirection.FLOOR
+        )
         trade.exit_time, trade.exit_price, trade.exit_reason = timestamp, fill, reason
         trade.gross_pnl = (fill - trade.entry_price) * trade.quantity
         trade.commission = (

@@ -1,5 +1,6 @@
 from decimal import ROUND_DOWN, Decimal
 
+from app.market.bist import TickDirection, round_to_tick
 from app.models.domain import TradePlan
 
 D = Decimal
@@ -20,18 +21,22 @@ def calculate_stop(
     stop = min(recent_swing_low, entry - atr * atr_multiplier)
     if stop <= 0 or stop >= entry:
         raise ValueError("invalid stop")
-    return stop.quantize(D("0.01")), "below_recent_swing_and_1_2_ATR"
+    return round_to_tick(stop, TickDirection.FLOOR), "below_recent_swing_and_1_2_ATR"
 
 
 def build_trade_plan(entry: Decimal, atr: Decimal, recent_swing_low: Decimal) -> TradePlan:
+    entry = round_to_tick(entry)
     stop, reason = calculate_stop(entry, atr, recent_swing_low)
     risk = entry - stop
+    target_1 = round_to_tick(entry + risk * D("1.5"), TickDirection.FLOOR)
+    target_2 = round_to_tick(entry + risk * D("2.5"), TickDirection.FLOOR)
+    risk_reward = (target_2 - entry) / risk
     return TradePlan(
         entry,
         stop,
-        (entry + risk * D("1.5")).quantize(D("0.01")),
-        (entry + risk * D("2.5")).quantize(D("0.01")),
-        D("2.5"),
+        target_1,
+        target_2,
+        risk_reward.quantize(D("0.01")),
         reason,
     )
 

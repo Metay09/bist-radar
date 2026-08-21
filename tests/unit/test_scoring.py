@@ -15,11 +15,11 @@ FEATURES = {
 }
 
 
-def test_high_score() -> None:
+def test_strong_but_common_inputs_do_not_saturate_at_90() -> None:
     result = score_radar("TEST", FEATURES, Trend.STRONG_UPTREND, MarketRegime.RISK_ON, 5, 2.5)
     assert (
-        result.score >= 90
-        and result.signal_class == SignalClass.VERY_STRONG_CANDIDATE
+        80 <= result.score < 90
+        and result.signal_class == SignalClass.STRONG_CANDIDATE
         and sum(result.components.values()) == result.score
     )
 

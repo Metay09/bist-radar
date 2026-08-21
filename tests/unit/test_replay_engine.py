@@ -157,10 +157,10 @@ def test_golden_replay_regression() -> None:
     trade = result.trades[0]
     metrics = replay_performance(result)
     assert len(result.trades) == 1
-    assert trade.entry_price == Decimal("10.005")
-    assert trade.exit_price == Decimal("8.9955")  # conservative stop-first
-    assert trade.net_pnl == Decimal("-77.1375375")
-    assert result.final_equity == Decimal("9922.8624625")
+    assert trade.entry_price == Decimal("10.01")
+    assert trade.exit_price == Decimal("8.99")  # conservative stop-first, executable tick
+    assert trade.net_pnl == Decimal("-77.925")
+    assert result.final_equity == Decimal("9922.075")
     assert metrics["max_drawdown"] < 0 and metrics["win_rate"] == 0
     assert daily_analytics(result, {"TEST": "Metal"})[0]["sector"] == "Metal"
 

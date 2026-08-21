@@ -112,19 +112,38 @@ class IntradayResearchService:
                     settings.intraday_signal_upgrade_points,
                     plan,
                 )
-                candidates.append(snapshot.payload() | {"disposition": disposition})
+                candidates.append(
+                    snapshot.payload()
+                    | {
+                        "disposition": disposition,
+                        "action_state": plan.get("status", "GECERSIZ"),
+                        "risk_reward": plan.get("risk_reward"),
+                        # The worker owns financial computation. Dashboard reads must only
+                        # expose this immutable, completed-bar plan snapshot.
+                        "trade_plan_snapshot": plan,
+                    }
+                )
 
-        def rank(row: dict[str, object]) -> tuple[int, str]:
+        action_priority = {
+            "BREAKOUT_ONAYI": 0,
+            "GIRIS_BOLGESINDE": 1,
+            "GIRIS_BEKLENIYOR": 2,
+            "KACMIS_KOVALAMA": 3,
+            "GECERSIZ": 4,
+        }
+
+        def rank(row: dict[str, object]) -> tuple[int, int, str]:
             score = row["radar_score"]
             if not isinstance(score, int):
                 raise ValueError("invalid radar score")
-            return -score, str(row["symbol"])
+            return action_priority.get(str(row.get("action_state")), 5), -score, str(row["symbol"])
 
         candidates.sort(key=rank)
         report: dict[str, object] = {
             "strategy_id": "radar-intraday-v1",
             "provider": "yfinance-research",
             "research_only": True,
+            "generated_at": current,
             "data_timestamp": max(
                 (row["timestamp"] for row in candidates),
                 default=None,  # type: ignore[type-var]
@@ -175,7 +194,7 @@ class IntradayResearchService:
         return updated
 
 
-def safe_intraday_cycle() -> dict[str, object] | None:
+def safe_intraday_cycle(completed_bar_at: datetime | None = None) -> dict[str, object] | None:
     log = logging.getLogger(__name__)
     try:
         service = IntradayResearchService()
@@ -194,9 +213,14 @@ def safe_intraday_cycle() -> dict[str, object] | None:
                 {"phase": "FAILED", "reason": type(adaptive_exc).__name__},
             )
             raise
-        from app.ml.training import run_shadow_training
+        from app.research.cycle import AutonomousResearchCycle
 
-        run_shadow_training()
+        report_stamp = report.get("data_timestamp")
+        cycle_stamp = completed_bar_at or (
+            report_stamp if isinstance(report_stamp, datetime) else None
+        )
+        if cycle_stamp is not None:
+            AutonomousResearchCycle().run(cycle_stamp, datetime.now(UTC))
         log.info(
             "intraday_scan_finished candidates=%d outcomes_updated=%d adaptive_updated=%d",
             len(report["candidates"]),  # type: ignore[arg-type]

@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
+from app.market.bist import TickDirection, canonical_bist_symbol, round_to_tick
+
 
 @dataclass
 class PaperTrade:
@@ -55,11 +57,18 @@ class PaperLedger:
         target_1: Decimal,
         target_2: Decimal,
     ) -> PaperTrade:
+        symbol = canonical_bist_symbol(symbol)
+        entry = round_to_tick(entry, TickDirection.CEIL)
+        stop = round_to_tick(stop, TickDirection.FLOOR)
+        target_1 = round_to_tick(target_1, TickDirection.FLOOR)
+        target_2 = round_to_tick(target_2, TickDirection.FLOOR)
         if not symbol or not (size > 0 and stop < entry < target_1 < target_2):
             raise ValueError("invalid paper trade")
         if self.commission_bps < 0 or self.slippage_bps < 0:
             raise ValueError("fees and slippage cannot be negative")
-        adjusted = entry * (1 + self.slippage_bps / Decimal("10000"))
+        adjusted = round_to_tick(
+            entry * (1 + self.slippage_bps / Decimal("10000")), TickDirection.CEIL
+        )
         trade = PaperTrade(
             str(uuid4()),
             symbol,
@@ -90,7 +99,12 @@ class PaperLedger:
             when = when.replace(tzinfo=UTC)
         if price <= 0 or when < entry_time:
             raise ValueError("invalid paper trade exit")
-        adjusted = price * (1 - self.slippage_bps / Decimal("10000"))
+        raw_adjusted = price * (1 - self.slippage_bps / Decimal("10000"))
+        # Preserve the existing 100% slippage stress-test boundary; zero is an
+        # accounting loss outcome, never an executable order price.
+        adjusted = (
+            round_to_tick(raw_adjusted, TickDirection.FLOOR) if raw_adjusted > 0 else Decimal("0")
+        )
         trade.exit_time, trade.exit_price, trade.exit_reason = when, adjusted, reason
         trade.gross_return = (adjusted - trade.entry_price) * trade.position_size
         trade.fees = (

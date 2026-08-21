@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   NavLink,
@@ -12,10 +12,13 @@ import type {
   Bar,
   Candidate,
   Detail,
+  Opportunity,
   PaperTrade,
   Signal,
   TradePlan,
 } from "./types";
+import { Icon } from "./design-system/Icon";
+import { cachedRequest, readCached } from "./read-cache";
 
 const trNumber = (n: number, d = 2) =>
   new Intl.NumberFormat("tr-TR", {
@@ -25,8 +28,9 @@ const trNumber = (n: number, d = 2) =>
 const trDate = (v: string | null | undefined) =>
   v
     ? new Intl.DateTimeFormat("tr-TR", {
-        dateStyle: "short",
-        timeStyle: "short",
+      dateStyle: "short",
+      timeStyle: "short",
+      timeZone: "Europe/Istanbul",
       }).format(new Date(v))
     : "Veri yok";
 const labels: Record<string, string> = {
@@ -82,13 +86,17 @@ const planLabel = (plan?: TradePlan) => {
     }[plan.status] || trLabel(plan.status)
   );
 };
+const sameSnapshot = (candidateTimestamp?: string, planTimestamp?: string) =>
+  !candidateTimestamp ||
+  (!!planTimestamp && Date.parse(candidateTimestamp) === Date.parse(planTimestamp));
 const nav = [
-  ["/", "⌁", "Radar"],
-  ["/signals", "◫", "Sinyaller"],
-  ["/portfolio", "◉", "Portföy"],
-  ["/analysis", "⌗", "Analiz"],
-  ["/system", "⚙", "Sistem"],
+  ["/", "radar", "Radar"],
+  ["/tracking", "tracking", "Takip"],
+  ["/history", "history", "Geçmiş"],
+  ["/analysis", "analysis", "Analiz"],
+  ["/system", "system", "Sistem"],
 ];
+
 const tourSteps = [
   [
     "BIST Radar’a hoş geldiniz",
@@ -132,21 +140,79 @@ const tourSteps = [
   ],
 ];
 
-function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
-  const [data, setData] = useState<T>();
+type LoadOptions = { retryDelays?: number[]; cacheKey?: string };
+
+function useLoad<T>(
+  load: (signal?: AbortSignal) => Promise<T>,
+  deps: unknown[] = [],
+  options: LoadOptions = {},
+) {
+  const cacheKey = options.cacheKey;
+  const initial = useRef(cacheKey ? readCached<T>(cacheKey) : undefined);
+  const [data, setData] = useState<T | undefined>(() => initial.current?.data);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(!initial.current);
+  const [refreshing, setRefreshing] = useState(Boolean(initial.current));
+  const [retrying, setRetrying] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const supersede = useRef(false);
+  const retryDelays = options.retryDelays || [];
   useEffect(() => {
     let live = true;
-    load()
-      .then((x) => live && setData(x))
-      .catch(() => live && setError("Veri servisine ulaşılamıyor"));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const cached = cacheKey ? readCached<T>(cacheKey) : undefined;
+    if (cached) setData(cached.data);
+    setLoading(!cached);
+    setRefreshing(Boolean(cached));
+    setRetrying(false);
+    setError("");
+    const run = () => {
+      const request = cacheKey
+        ? cachedRequest(cacheKey, (signal) => load(signal), supersede.current).then((entry) => entry.data)
+        : load();
+      supersede.current = false;
+      request.then((x) => {
+          if (!live) return;
+          setData(x);
+          setError("");
+          setLoading(false);
+          setRefreshing(false);
+          setRetrying(false);
+        })
+        .catch(() => {
+          if (!live) return;
+          const delay = retryDelays[attempt++];
+          if (delay != null) {
+            setRetrying(true);
+            timer = setTimeout(run, delay);
+          }
+          else {
+            setError("Veri servisine ulaşılamıyor");
+            setLoading(false);
+            setRefreshing(false);
+            setRetrying(false);
+          }
+        });
+    };
+    run();
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
     // Custom hook callers define the reload boundary explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { data, error };
+  }, [...deps, reloadKey]);
+  const reload = useCallback(() => setReloadKey((x) => x + 1), []);
+  const reloadLatest = useCallback(() => {
+    supersede.current = true;
+    setReloadKey((x) => x + 1);
+  }, []);
+  return {
+    data, error, loading, refreshing, retrying,
+    reload,
+    reloadLatest,
+  };
 }
 const badge = (c: string) =>
   c.includes("VERY")
@@ -187,8 +253,10 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Radar />} />
           <Route path="/symbol/:symbol" element={<Stock />} />
+          <Route path="/tracking" element={<Tracking />} />
+          <Route path="/history" element={<Signals />} />
           <Route path="/signals" element={<Signals />} />
-          <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/portfolio" element={<Tracking />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/system" element={<System />} />
         </Routes>
@@ -220,6 +288,7 @@ function AdaptiveDecisionCard() {
   const result = useLoad(
     () => (symbol ? api.adaptive(symbol) : Promise.reject()),
     [symbol],
+    symbol ? { cacheKey: `adaptive:${symbol}` } : {},
   );
   if (!symbol || !result.data) return null;
   const d = result.data,
@@ -311,6 +380,7 @@ function AdaptiveAnalytics() {
   const result = useLoad(
     () => (enabled ? api.adaptiveAnalytics() : Promise.reject()),
     [enabled],
+    enabled ? { cacheKey: "analysis-adaptive" } : {},
   );
   if (!enabled || !result.data) return null;
   const d = result.data;
@@ -368,7 +438,7 @@ function Navigation() {
     <nav aria-label="Masaüstü ana navigasyon">
       {nav.map(([to, icon, label]) => (
         <NavLink key={to} to={to} end={to === ("/" as never)}>
-          <span aria-hidden="true">{icon}</span>
+          <Icon name={icon} />
           {label}
         </NavLink>
       ))}
@@ -385,7 +455,7 @@ function Bottom() {
           end={to === ("/" as never)}
           aria-label={label}
         >
-          <span aria-hidden="true">{icon}</span>
+          <Icon name={icon} />
           <small>{label}</small>
         </NavLink>
       ))}
@@ -462,19 +532,26 @@ const radarState = {
   query: "bist-radar-query",
   strength: "bist-radar-strength",
   scroll: "bist-radar-scroll",
+  sort: "bist-radar-sort",
 };
 
 function Radar() {
-  const summary = useLoad(api.summary);
-  const universe = useLoad(api.universe);
-  const rows = useLoad(api.candidates);
-  const plans = useLoad(api.tradePlans);
+  const summary = useLoad(api.summary, [], { cacheKey: "dashboard-summary" });
+  const universe = useLoad(api.universe, [], { cacheKey: "universe-summary" });
+  const rows = useLoad(api.candidates, [], { cacheKey: "radar-candidates" });
+  const opportunities = useLoad((signal) => api.opportunities(signal), [], {
+    cacheKey: "radar-opportunities", retryDelays: [1000, 3000],
+  });
+  const snapshot = useLoad((signal) => api.snapshotStatus(signal), [], {
+    cacheKey: "radar-snapshot-status", retryDelays: [1000, 3000],
+  });
   const [query, setQuery] = useState(
     () => sessionStorage.getItem(radarState.query) || "",
   );
   const [strength, setStrength] = useState(
     () => sessionStorage.getItem(radarState.strength) || "ALL",
   );
+  const [sort, setSort] = useState(() => sessionStorage.getItem(radarState.sort) || "priority");
   const restored = useRef(false);
   useEffect(() => {
     sessionStorage.setItem(radarState.query, query);
@@ -482,6 +559,32 @@ function Radar() {
   useEffect(() => {
     sessionStorage.setItem(radarState.strength, strength);
   }, [strength]);
+  useEffect(() => { sessionStorage.setItem(radarState.sort, sort); }, [sort]);
+  const reloadSnapshot = snapshot.reload;
+  const reloadOpportunityLatest = opportunities.reloadLatest;
+  const latestOpportunitySnapshot = useRef(opportunities.data?.snapshot_id);
+  useEffect(() => { latestOpportunitySnapshot.current = opportunities.data?.snapshot_id; }, [opportunities.data?.snapshot_id]);
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      reloadSnapshot();
+    };
+    const timer = setInterval(check, snapshot.data?.market_open ? 25_000 : 5 * 60_000);
+    const foreground = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", foreground);
+    window.addEventListener("focus", foreground);
+    window.addEventListener("online", foreground);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", foreground);
+      window.removeEventListener("focus", foreground);
+      window.removeEventListener("online", foreground);
+    };
+  }, [snapshot.data?.market_open, reloadSnapshot]);
+  useEffect(() => {
+    if (snapshot.data?.snapshot_id && latestOpportunitySnapshot.current &&
+        snapshot.data.snapshot_id !== latestOpportunitySnapshot.current) reloadOpportunityLatest();
+  }, [snapshot.data?.snapshot_id, reloadOpportunityLatest]);
   useEffect(() => {
     if (restored.current || !summary.data || !rows.data) return;
     restored.current = true;
@@ -493,24 +596,34 @@ function Radar() {
         ),
       );
   }, [summary.data, rows.data]);
+  const coherentRows = opportunities.data?.opportunities.map((x) => x.candidate);
+  const displayRows = coherentRows || rows.data;
+  const planMap = useMemo(() => Object.fromEntries(
+    (opportunities.data?.opportunities || []).filter((x) => x.plan).map((x) => [x.candidate.symbol, x.plan!]),
+  ), [opportunities.data]);
   const filtered = useMemo(
-    () =>
-      [...(rows.data || [])]
+    () => {
+      const result = [...(displayRows || [])]
         .filter((x) => x.symbol.includes(query.toUpperCase()))
         .filter(
           (x) =>
             strength === "ALL" ||
             (strength === "BIST100" && x.bist100_member) ||
             x.classification === strength,
-        )
-        .sort(
-          (a, b) =>
-            b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol),
-        ),
-    [rows.data, query, strength],
-  );
-  const planMap = Object.fromEntries(
-    (plans.data || []).map((x) => [x.symbol, x]),
+        );
+      return result.sort((a, b) => {
+        if (sort === "radar") return b.radar_score - a.radar_score;
+        if (sort === "rvol") return b.rvol - a.rvol;
+        if (sort === "momentum") return b.early_momentum_score - a.early_momentum_score;
+        if (sort === "newest") return Date.parse(b.timestamp) - Date.parse(a.timestamp);
+        if (sort === "rr" && opportunities.data) return (planMap[b.symbol]?.risk_reward || 0) - (planMap[a.symbol]?.risk_reward || 0);
+        if (sort === "distance") return Math.abs(a.breakout_distance) - Math.abs(b.breakout_distance);
+        if (sort === "priority" && !opportunities.data) return 0;
+        const priorities: Record<string, number> = {BREAKOUT_ONAYI: 0, GIRIS_BOLGESINDE: 1, GIRIS_BEKLENIYOR: 2, KACMIS_KOVALAMA: 3, GECERSIZ: 4};
+        return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol);
+      });
+    },
+    [displayRows, query, strength, sort, planMap, opportunities.data],
   );
   if (!summary.data) return <State error={summary.error} />;
   const s = summary.data;
@@ -523,8 +636,12 @@ function Radar() {
       <div className={`fresh ${s.freshness.state.toLowerCase()}`}>
         <b>{s.freshness.label}</b>
         <span>
-          {s.provider} · {trDate(s.data_timestamp)}
+          {s.provider} · {trDate(opportunities.data?.data_timestamp || s.data_timestamp)}
         </span>
+      </div>
+      <div className="read-status" aria-live="polite">
+        {opportunities.retrying ? "↻ Bağlantı yeniden deneniyor" : opportunities.refreshing ? "↻ Güncelleniyor" : opportunities.error && opportunities.data ? "⚠ Son geçerli veri gösteriliyor" : s.market_open ? "● Güncel" : "Piyasa kapalı"}
+        <button onClick={() => { snapshot.reload(); opportunities.reload(); }} disabled={opportunities.refreshing}>↻ Yenile</button>
       </div>
       <div className="warning">
         Yahoo/yfinance verileri araştırma amaçlı ve doğrulanmamış kaynaktır.{" "}
@@ -562,7 +679,7 @@ function Radar() {
                 text="0–100 bileşik karar-destek puanıdır; otomatik alım değildir."
               />
             </h2>
-            <p>Radar skoruna göre sıralı</p>
+            <p>{opportunities.data ? "Aksiyon önceliğine göre karar listesi" : "Planlar hazır olana kadar Radar sırası korunuyor"}</p>
           </div>
           <input
             aria-label="Sembol ara"
@@ -571,6 +688,13 @@ function Radar() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
+        <label className="sort-control">Sırala
+          <select aria-label="Radar sıralaması" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="priority">Önem</option><option value="radar">Radar</option><option value="rvol">RVOL</option>
+            <option value="momentum">Momentum</option><option value="rr">Risk / Getiri</option><option value="newest">En Yeni</option>
+            <option value="distance">Entry zone distance</option>
+          </select>
+        </label>
         <div
           className="tabs universe-filters"
           role="group"
@@ -595,7 +719,11 @@ function Radar() {
         {rows.error ? (
           <State error={rows.error} />
         ) : filtered.length ? (
-          <CandidateList rows={filtered} plans={planMap} />
+          <CandidateList
+            rows={filtered}
+            plans={planMap}
+            planState={opportunities.error && !opportunities.data ? "error" : opportunities.loading ? "loading" : "ready"}
+          />
         ) : (
           <State empty />
         )}
@@ -607,9 +735,11 @@ function Radar() {
 function CandidateList({
   rows,
   plans = {},
+  planState,
 }: {
   rows: Candidate[];
   plans?: Record<string, TradePlan>;
+  planState: "loading" | "ready" | "error";
 }) {
   const remember = () =>
     sessionStorage.setItem(radarState.scroll, String(window.scrollY));
@@ -655,7 +785,7 @@ function CandidateList({
                 <td>{trNumber(x.rvol)}x</td>
                 <td>{x.early_momentum_score}</td>
                 <td>
-                  <PlanBadge plan={plans[x.symbol]} />
+                  <PlanBadge plan={plans[x.symbol]} state={planState} candidateTimestamp={x.timestamp} />
                 </td>
                 <td>{trDate(x.timestamp)}</td>
               </tr>
@@ -699,8 +829,16 @@ function CandidateList({
                   <b>{x.early_momentum_score}</b>
                 </span>
               </div>
-              <PlanBadge plan={plan} />
-              {plan?.entry_zone_low != null && (
+              <div className="candidate-action"><small>ŞİMDİKİ AKSİYON</small><PlanBadge plan={plan} state={planState} candidateTimestamp={x.timestamp} /></div>
+              {planState === "loading" && <PlanLevelSkeleton />}
+              {planState === "ready" && !plan && <PlanLevelSkeleton updating />}
+              {planState === "error" && <div className="plan-level-error">Plan geçici olarak kullanılamıyor</div>}
+              {planState === "ready" && sameSnapshot(x.timestamp, plan?.timestamp) && plan?.entry_zone_low != null && <div className="quick-levels">
+                <Metric label="ALIM" value={`${trNumber(plan.entry_zone_low)}–${trNumber(plan.entry_zone_high!)}`} />
+                <Metric label="STOP" value={trNumber(plan.stop_price!)} tone="stop" />
+                <Metric label="H1" value={plan.targets?.[0] ? trNumber(plan.targets[0].price) : "—"} tone="target" />
+              </div>}
+              {planState === "ready" && sameSnapshot(x.timestamp, plan?.timestamp) && plan?.entry_zone_low != null && (
                 <details>
                   <summary>İşlem planını göster</summary>
                   <dl>
@@ -729,12 +867,28 @@ function CandidateList({
     </>
   );
 }
-function PlanBadge({ plan }: { plan?: TradePlan }) {
+function PlanLevelSkeleton({ updating = false }: { updating?: boolean }) {
+  return <div className="quick-levels plan-level-skeleton" aria-label={updating ? "Plan güncelleniyor" : "Plan seviyeleri yükleniyor"}>
+    {["ALIM", "STOP", "H1"].map((label) => <span key={label}><small>{label}</small><i /></span>)}
+  </div>;
+}
+
+function PlanBadge({
+  plan,
+  state = "ready",
+  candidateTimestamp,
+}: {
+  plan?: TradePlan;
+  state?: "loading" | "ready" | "error";
+  candidateTimestamp?: string;
+}) {
+  if (state === "loading") return <span className="tag neutral plan-pending">Plan yükleniyor…</span>;
+  if (state === "error") return <span className="tag neutral plan-unavailable">Plan verisi alınamadı</span>;
+  if (!plan || !sameSnapshot(candidateTimestamp, plan.timestamp))
+    return <span className="tag neutral plan-pending">Plan güncelleniyor</span>;
   return plan ? (
     <span className={`tag ${planTone(plan.status)}`}>{planLabel(plan)}</span>
-  ) : (
-    <span className="tag neutral">İşlem Uygun Değil</span>
-  );
+  ) : null;
 }
 
 function TradePlanCard({ plan }: { plan: TradePlan }) {
@@ -967,12 +1121,32 @@ function CandleChart({ bars, plan }: { bars: Bar[]; plan?: TradePlan }) {
   );
 }
 
+function WarmStock({ opportunity }: { opportunity: Opportunity }) {
+  const { candidate, plan } = opportunity;
+  return <>
+    <Header title={candidate.symbol} subtitle="Son Radar görünümü · detay güncelleniyor" />
+    <section className="decision-hero warm-detail">
+      <div><span className="eyebrow">SON RADAR GÖRÜNÜMÜ</span><h2>{plan ? planLabel(plan) : "Plan güncelleniyor"}</h2><p>Detay verileri arka planda güncelleniyor…</p></div>
+      <div className="hero-score"><small>RADAR</small><strong>{candidate.radar_score}</strong><span>{trLabel(candidate.classification)}</span></div>
+    </section>
+    {plan?.entry_zone_low != null && <div className="quick-levels">
+      <Metric label="ALIM" value={`${trNumber(plan.entry_zone_low)}–${trNumber(plan.entry_zone_high!)}`} />
+      <Metric label="STOP" value={trNumber(plan.stop_price!)} tone="stop" />
+      <Metric label="H1" value={plan.targets?.[0] ? trNumber(plan.targets[0].price) : "—"} tone="target" />
+    </div>}
+  </>;
+}
+
 function Stock() {
   const { symbol = "" } = useParams();
-  const result = useLoad(() => api.detail(symbol), [symbol]);
-  const results = useLoad(() => api.symbolResults(symbol), [symbol]);
-  const shadow = useLoad(() => api.symbolShadow(symbol), [symbol]);
-  const [tab, setTab] = useState("plan");
+  const warm = readCached<import("./types").OpportunityReadModel>("radar-opportunities")
+    ?.data.opportunities.find((item) => item.candidate.symbol === symbol);
+  const result = useLoad(() => api.detail(symbol), [symbol], { cacheKey: `symbol-detail:${symbol}` });
+  const results = useLoad(() => api.symbolResults(symbol), [symbol], { cacheKey: `symbol-results:${symbol}` });
+  const shadow = useLoad(() => api.symbolShadow(symbol), [symbol], { cacheKey: `symbol-shadow:${symbol}` });
+  const latestShadow = useLoad(() => api.latestSymbolShadow(symbol), [symbol], { cacheKey: `symbol-latest-shadow:${symbol}` });
+  const [tab, setTab] = useState("summary");
+  if (!result.data && warm) return <WarmStock opportunity={warm} />;
   if (!result.data) return <State error={result.error} />;
   const d: Detail = result.data,
     c = d.candidate,
@@ -981,8 +1155,13 @@ function Stock() {
     <>
       <Header
         title={d.symbol}
-        subtitle="Hisse detay, işlem planı ve sinyal gelişimi"
+        subtitle="Karar, risk seviyeleri ve setup yaşam döngüsü"
       />
+      <section className="decision-hero">
+        <div><span className="eyebrow">ŞİMDİKİ KARAR</span><h2>Karar: {planLabel(d.trade_plan)}</h2><p>{d.trade_plan.explanation?.[0] || "Plan bağlamı henüz oluşmadı."}</p></div>
+        <div className="hero-score"><small>RADAR</small><strong>{c?.radar_score ?? "—"}</strong><span>{c ? trLabel(c.classification) : "Veri yok"}</span></div>
+      </section>
+      <ShadowSecondOpinion data={latestShadow.data} error={latestShadow.error} />
       <div className={`fresh ${d.freshness.state.toLowerCase()}`}>
         {d.freshness.label}
       </div>
@@ -1001,12 +1180,11 @@ function Stock() {
       )}
       <div className="tabs" role="tablist">
         {[
-          ["plan", "İşlem Planı"],
-          ["overview", "Teknik Bakış"],
-          ["chart", "Grafik"],
-          ["history", "Sinyal Geçmişi"],
-          ["outcomes", "Sonuçlar"],
-          ["shadow", "Shadow"],
+          ["summary", "ÖZET"],
+          ["chart", "GRAFİK"],
+          ["lifecycle", "YAŞAM DÖNGÜSÜ"],
+          ["history", "GEÇMİŞ"],
+          ["research", "ARAŞTIRMA"],
         ].map(([key, label]) => (
           <button
             role="tab"
@@ -1019,7 +1197,7 @@ function Stock() {
           </button>
         ))}
       </div>
-      {tab === "overview" && (
+      {tab === "summary" && (
         <section className="metrics">
           {[
             ["Fiyat", c ? trNumber(c.price) : "Veri yok"],
@@ -1038,14 +1216,14 @@ function Stock() {
           ))}
         </section>
       )}
-      {tab === "plan" && <TradePlanCard plan={d.trade_plan} />}{" "}
+      {tab === "summary" && <TradePlanCard plan={d.trade_plan} />}{" "}
       {tab === "chart" && (
         <section className="panel">
           <h2>15 Dakikalık Fiyat</h2>
           <CandleChart bars={d.bars} plan={d.trade_plan} />
         </section>
       )}
-      {tab === "history" && (
+      {tab === "lifecycle" && (
         <section className="panel">
           <h2>Sinyal Gelişimi</h2>
           {d.progression.length ? (
@@ -1063,7 +1241,7 @@ function Stock() {
           )}
         </section>
       )}
-      {tab === "outcomes" && (
+      {tab === "history" && (
         <section className="panel">
           <h2>Sonuçlar</h2>
           {results.data?.length ? (
@@ -1080,15 +1258,16 @@ function Stock() {
           )}
         </section>
       )}
-      {tab === "shadow" && (
+      {tab === "research" && (
         <section className="panel shadow">
           <h2>
-            SHADOW INTELLIGENCE{" "}
+            ARAŞTIRMA / SHADOW{" "}
             <Info
               label="Shadow"
               text="Bu model Radar kararını, riski veya işlemi değiştiremez."
             />
           </h2>
+          <div className="method-note"><b>Karara etkisi: YOK</b><span>Bu alan production Radar kararını değiştirmez.</span></div>
           {shadow.data ? (
             <dl>
               <dt>Radar sinyali</dt>
@@ -1116,6 +1295,64 @@ function Stock() {
     </>
   );
 }
+
+function ShadowSecondOpinion({
+  data,
+  error,
+}: {
+  data?: Record<string, unknown>;
+  error?: string;
+}) {
+  const prediction = data?.prediction as Record<string, unknown> | null | undefined;
+  const quality = (prediction?.head_quality || {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
+  const display = (head: string, key: string) => {
+    const value = prediction?.[key];
+    if (typeof value !== "number") return "—";
+    return quality[head]?.display === "PROBABILITY"
+      ? `%${trNumber(value * 100, 1)}`
+      : `Skor ${trNumber(value * 100, 0)}/100`;
+  };
+  const values = [
+    ["Alım", "entry", "entry_probability"],
+    ["Stop-before-H1", "stop", "stop_probability"],
+    ["H1", "h1", "h1_probability"],
+    ["H2 | H1", "h2", "h2_probability"],
+    ["H3 | H2", "h3", "h3_probability"],
+  ];
+  return (
+    <section className="shadow-second-opinion" aria-label="Shadow ikinci görüş">
+      <div className="shadow-second-head">
+        <div>
+          <span className="eyebrow">SHADOW · İKİNCİ GÖRÜŞ</span>
+          <h3>{prediction ? "Model görüşü" : "Model öğreniyor"}</h3>
+        </div>
+        <span className="tag blue">
+          {String(data?.model_maturity || "INSUFFICIENT")}
+        </span>
+      </div>
+      {error ? (
+        <p className="shadow-empty">Shadow verisine şu anda ulaşılamıyor.</p>
+      ) : !data ? (
+        <div className="shadow-mini-skeleton" aria-label="Shadow yükleniyor" />
+      ) : prediction ? (
+        <div className="shadow-values">
+          {values.map(([label, head, key]) => (
+            <div key={head}>
+              <small>{label}</small>
+              <strong>{display(head, key)}</strong>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="shadow-empty">Henüz yeterli veri yok · model öğreniyor.</p>
+      )}
+      <footer>Shadow yalnız ikinci görüş sağlar · Radar kararını değiştirmez.</footer>
+    </section>
+  );
+}
 function Signals() {
   const [bucket, setBucket] = useState("");
   const [status, setStatus] = useState("");
@@ -1126,8 +1363,8 @@ function Signals() {
     const value = p.toString();
     return value ? `?${value}` : "";
   };
-  const result = useLoad(() => api.signals(query()), [bucket, status]);
-  const daily = useLoad(api.daily);
+  const result = useLoad(() => api.signals(query()), [bucket, status], { cacheKey: `history:${query()}` });
+  const daily = useLoad(api.daily, [], { cacheKey: "history-daily" });
   const days = Array.isArray(daily.data) ? daily.data : [];
   const latest = days[0] || {};
   return (
@@ -1295,14 +1532,33 @@ function SignalHistory({ signal: s }: { signal: Signal }) {
             ))}
           </div>
           {s.shadow_prediction && (
-            <div className="prediction-strip">
-              <b>Shadow model · calibration kapılı</b>
-              <span>Alım {shadowValue("entry", prediction.entry_probability)}</span>
-              <span>Stop-before-H1 {shadowValue("stop", prediction.stop_probability)}</span>
-              <span>H1 {shadowValue("h1", prediction.h1_probability)}</span>
-              <span>H2|H1 {shadowValue("h2", prediction.h2_probability)}</span>
-              <span>H3|H2 {shadowValue("h3", prediction.h3_probability)}</span>
-            </div>
+            <section className="research-card" aria-label="Araştırma shadow">
+              <div className="research-head">
+                <div>
+                  <small>ARAŞTIRMA / SHADOW</small>
+                  <b>Bu bölüm Radar kararını etkilemez.</b>
+                </div>
+                <span className="tag neutral">
+                  {String(prediction.confidence || "SHADOW")}
+                </span>
+              </div>
+              <div className="research-grid">
+                <Metric label="Radar Gücü" value={`${s.radar_score}/100`} />
+                <Metric label="ML Shadow" value={shadowValue("entry", prediction.entry_probability)} />
+                <Metric label="Expected R" value={typeof prediction.expected_r === "number" ? trNumber(prediction.expected_r, 2) : "Yetersiz veri"} />
+                <Metric label="R aralığı q10–q90" value={typeof prediction.q10_r === "number" && typeof prediction.q90_r === "number" ? `${trNumber(prediction.q10_r, 2)} – ${trNumber(prediction.q90_r, 2)}` : "Yetersiz veri"} />
+                <Metric label="Model kalite" value={String(prediction.model_quality || prediction.confidence || "Araştırılıyor")} />
+                <Metric label="Sample maturity" value={String(prediction.sample_maturity || "INSUFFICIENT_DATA")} />
+              </div>
+              <div className="prediction-strip">
+                <b>Calibration kapılı koşullu görevler</b>
+                <span>Alım {shadowValue("entry", prediction.entry_probability)}</span>
+                <span>Stop-before-H1 {shadowValue("stop", prediction.stop_probability)}</span>
+                <span>H1 {shadowValue("h1", prediction.h1_probability)}</span>
+                <span>H2|H1 {shadowValue("h2", prediction.h2_probability)}</span>
+                <span>H3|H2 {shadowValue("h3", prediction.h3_probability)}</span>
+              </div>
+            </section>
           )}
         </>
       ) : (
@@ -1329,17 +1585,40 @@ function SignalHistory({ signal: s }: { signal: Signal }) {
     </article>
   );
 }
-function Portfolio() {
-  const result = useLoad(api.performance);
-  const trades = useLoad(api.trades);
+function Tracking() {
+  const signals = useLoad(() => api.signals("?limit=50"), [], { cacheKey: "tracking-signals" });
+  const rows = signals.data || [];
+  const groups = [
+    ["ALIM İÇİN HAZIR", ["ENTRY_READY", "GIRIS_BOLGESINDE", "BREAKOUT_ONAYI"]],
+    ["ALIM BEKLENİYOR", ["WAITING_ENTRY", "GIRIS_BEKLENIYOR"]],
+    ["AKTİF İŞLEM", ["ENTRY_ACTIVE", "H1_ACTIVE", "H2_ACTIVE"]],
+    ["MÜDAHALE GEREKEN", ["STOPPED", "TIME_EXIT", "THESIS_INVALIDATED"]],
+    ["BUGÜN TAMAMLANAN", ["H3_REACHED", "NO_ENTRY", "EXPIRED_H0", "EXPIRED_H1", "EXPIRED_H2"]],
+  ] as const;
+  return <>
+    <Header title="Takip" subtitle="Hazır setup’lar, aktif işlemler ve müdahale gerektiren durumlar" />
+    <div className="tracking-groups">
+      {groups.map(([title, states]) => {
+        const matches = rows.filter((row) => states.includes(String(row.lifecycle) as never));
+        return <section className="panel tracking-group" key={title}>
+          <div className="section-title"><h2>{title}</h2><span>{matches.length}</span></div>
+          {matches.length ? matches.slice(0, 8).map((row) => <SignalHistory key={row.signal_id} signal={row} />) :
+            <State empty text={title === "ALIM İÇİN HAZIR" ? "Henüz alıma hazır setup yok." : "Bu grupta güncel kayıt yok."} />}
+        </section>;
+      })}
+    </div>
+    <Portfolio embedded />
+  </>;
+}
+function Portfolio({ embedded = false }: { embedded?: boolean }) {
+  const result = useLoad(api.performance, [], { cacheKey: "tracking-performance" });
+  const trades = useLoad(api.trades, [], { cacheKey: "tracking-trades" });
   const d = result.data;
   const rows = trades.data || [];
   return (
     <>
-      <Header
-        title="Paper Portföy"
-        subtitle="Açık ve kapanmış sanal işlemler"
-      />
+      {!embedded && <Header title="Paper Portföy" subtitle="Açık ve kapanmış sanal işlemler" />}
+      {embedded && <SectionHeader title="Paper Portföy" subtitle="Açık ve kapanmış sanal işlemler" />}
       <div className="warning">
         <b>PAPER ONLY</b> — Gerçek emir veya broker bağlantısı yoktur.
       </div>
@@ -1370,6 +1649,9 @@ function Portfolio() {
       />
     </>
   );
+}
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="section-header"><div><span className="eyebrow">TAKİP</span><h2>{title}</h2><p>{subtitle}</p></div></div>;
 }
 function TradeSection({ title, rows }: { title: string; rows: PaperTrade[] }) {
   const empty = title.startsWith("Açık")
@@ -1427,8 +1709,9 @@ function TradeSection({ title, rows }: { title: string; rows: PaperTrade[] }) {
   );
 }
 function Analysis() {
-  const ml = useLoad(api.ml);
-  const acc = useLoad(api.accuracy);
+  const ml = useLoad(api.ml, [], { cacheKey: "analysis-ml" });
+  const acc = useLoad(api.accuracy, [], { cacheKey: "analysis-accuracy" });
+  const evidence = useLoad(api.evidence, [], { cacheKey: "analysis-evidence" });
   const ready = Number(ml.data?.training_eligible || 0) > 0;
   return (
     <>
@@ -1449,6 +1732,34 @@ function Analysis() {
           label="Üretilen tahmin"
           value={Number(ml.data?.predictions || 0)}
         />
+      </section>
+      <section className="panel shadow evidence-dashboard">
+        <div className="panelhead">
+          <div>
+            <span className="eyebrow">KANIT DURUMU</span>
+            <h2>Autonomous evidence accumulation</h2>
+            <p>Gerçek outcome ve bağımsız OOS zaman blokları biriktikçe güncellenir.</p>
+          </div>
+          <span className="tag neutral">Radar decision effect: NONE</span>
+        </div>
+        {!evidence.data ? <State error={evidence.error} /> : (
+          <div className="learning-grid">
+            <dt>15m observations</dt><dd>{String(evidence.data["15m_observations"] || 0)}</dd>
+            <dt>5m observations</dt><dd>{String(evidence.data["5m_observations"] || 0)}</dd>
+            <dt>5m latency maturity</dt><dd>{String((evidence.data.latency as Record<string, unknown>)?.maturity || "INSUFFICIENT")}</dd>
+            <dt>Mature labels</dt><dd>{String(evidence.data.mature_labels || 0)}</dd>
+            <dt>OOS sample / folds</dt><dd>{String(evidence.data.oos_sample || 0)} / {String(evidence.data.walk_forward_folds || 0)}</dd>
+            <dt>Predictive edge</dt><dd>{String(evidence.data.predictive_edge || "INSUFFICIENT")}</dd>
+            <dt>Economic edge</dt><dd>{String(evidence.data.economic_edge || "INSUFFICIENT")}</dd>
+            <dt>Current champion</dt><dd>{String(evidence.data.current_champion)}</dd>
+            <dt>Best challenger</dt><dd>{String(evidence.data.best_challenger || "Henüz yok")}</dd>
+            <dt>Challenger vs champion</dt><dd>{String(evidence.data.challenger_vs_champion)}</dd>
+            <dt>Expected-R improvement</dt><dd>{evidence.data.expected_r_improvement == null ? "INSUFFICIENT" : String(evidence.data.expected_r_improvement)}</dd>
+            <dt>Drawdown difference</dt><dd>{evidence.data.drawdown_difference == null ? "INSUFFICIENT" : String(evidence.data.drawdown_difference)}</dd>
+            <dt>Model status</dt><dd>{String(evidence.data.model_status)}</dd>
+            <dt>Auto promotion</dt><dd>NO</dd>
+          </div>
+        )}
       </section>
       <section className="panel shadow">
         <div className="panelhead">
@@ -1552,9 +1863,9 @@ function Analysis() {
   );
 }
 function System() {
-  const sys = useLoad(api.system);
-  const sum = useLoad(api.summary);
-  const universe = useLoad(api.universe);
+  const sys = useLoad(api.system, [], { cacheKey: "system-overview" });
+  const sum = useLoad(api.summary, [], { cacheKey: "dashboard-summary" });
+  const universe = useLoad(api.universe, [], { cacheKey: "universe-summary" });
   const jobs = Array.isArray(sys.data?.worker_jobs)
     ? (sys.data.worker_jobs as Record<string, unknown>[])
     : [];

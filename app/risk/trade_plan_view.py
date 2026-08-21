@@ -1,9 +1,12 @@
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.market.bist import TickDirection, get_tick_size, round_to_tick
 from app.risk.engine import calculate_stop, position_size
 
 D = Decimal
+log = logging.getLogger(__name__)
 
 
 def _decimal(value: object) -> Decimal:
@@ -38,20 +41,35 @@ def build_research_trade_plan(
         "explanation": [],
     }
     try:
-        reference = _decimal(candidate["price"])
+        raw_reference = _decimal(candidate["price"])
+        reference = round_to_tick(raw_reference, TickDirection.NEAREST)
         atr = _decimal(candidate["atr"])
         swing = min(_decimal(value) for value in recent_lows[-10:])
         if reference <= 0 or atr <= 0:
             raise ValueError("positive price and ATR required")
         breakout_distance = _decimal(candidate.get("breakout_distance", 0))
         breakout = reference * (D("1") + breakout_distance / D("100"))
-        zone_low = breakout - atr * D("0.25")
-        zone_high = breakout + atr * D("0.10")
+        raw_breakout = breakout
+        zone_low = round_to_tick(breakout - atr * D("0.25"), TickDirection.FLOOR)
+        zone_high = round_to_tick(breakout + atr * D("0.10"), TickDirection.CEIL)
+        breakout = round_to_tick(raw_breakout, TickDirection.CEIL)
         entry = (zone_low + zone_high) / 2
+        entry = round_to_tick(entry, TickDirection.CEIL)
         stop, stop_reason = calculate_stop(entry, atr, swing)
         risk = entry - stop
-        targets = [entry + risk * multiple for multiple in (D("1.5"), D("2.5"), D("3"))]
+        # Floor keeps target normalization from improving theoretical R/R.
+        targets = [
+            round_to_tick(entry + risk * multiple, TickDirection.FLOOR)
+            for multiple in (D("1.5"), D("2.5"), D("3"))
+        ]
         rr = (targets[1] - entry) / risk
+        if abs(reference - raw_reference) > get_tick_size(raw_reference):
+            log.debug(
+                "theoretical_price_normalized symbol=%s raw=%s executable=%s",
+                symbol,
+                raw_reference,
+                reference,
+            )
         quantity = position_size(
             account_equity,
             entry,
@@ -63,7 +81,15 @@ def build_research_trade_plan(
         base["explanation"] = ["Henüz güvenli işlem planı oluşturmak için yeterli bağlam yok."]
         return base
 
-    if reference <= stop:
+    checked_at = (now or datetime.now(UTC)).astimezone(UTC)
+    age_minutes = (
+        max(D("0"), D(str((checked_at - timestamp.astimezone(UTC)).total_seconds() / 60)))
+        if timestamp
+        else None
+    )
+    if age_minutes is None or age_minutes > stale_minutes:
+        status = "GECERSIZ"
+    elif reference <= stop or reference >= targets[-1]:
         status = "GECERSIZ"
     elif reference > zone_high + atr * D("0.50"):
         status = "KACMIS_KOVALAMA"
@@ -74,12 +100,6 @@ def build_research_trade_plan(
     else:
         status = "GIRIS_BEKLENIYOR"
 
-    checked_at = (now or datetime.now(UTC)).astimezone(UTC)
-    age_minutes = (
-        max(D("0"), D(str((checked_at - timestamp.astimezone(UTC)).total_seconds() / 60)))
-        if timestamp
-        else None
-    )
     stop_text = {
         "below_recent_swing_and_1_2_ATR": (
             "Stop seviyesi son kısa vadeli dip ve 1,2 ATR dikkate alınarak hesaplandı."
@@ -108,7 +128,7 @@ def build_research_trade_plan(
         explanations.append("Veri eski; plan yalnız son tamamlanmış araştırma barına dayanır.")
 
     def money(value: Decimal) -> float:
-        return float(value.quantize(D("0.01")))
+        return float(value)
 
     return base | {
         "reference_price": money(reference),

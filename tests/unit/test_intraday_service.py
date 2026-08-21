@@ -14,14 +14,16 @@ def service_fixture() -> tuple[IntradayResearchService, IntradayRepository]:
     db = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(db)
     sessions = sessionmaker(bind=db, expire_on_commit=False)
-    start = datetime(2026, 1, 1, 7, tzinfo=UTC)
+    start = datetime(2025, 12, 28, 0, tzinfo=UTC)
     with sessions.begin() as session:
-        for index in range(80):
-            close = 100 + index * 0.2
+        # Six comparable sessions provide a valid same-slot RVOL baseline.
+        for index in range(72):
+            close = 100 + index * 0.05 + (0.2 if index % 2 else -0.2)
+            timestamp = start + timedelta(days=index // 12, minutes=15 * (index % 12))
             session.add(
                 MarketBarRow(
                     symbol="ASELS",
-                    timestamp=start + timedelta(minutes=15 * index),
+                    timestamp=timestamp,
                     open=close - 0.1,
                     high=close + 0.5,
                     low=close - 0.5,
@@ -29,7 +31,7 @@ def service_fixture() -> tuple[IntradayResearchService, IntradayRepository]:
                     volume=float(1000 + index * 100),
                     timeframe="15m",
                     provider_id="yfinance-research",
-                    received_at=start + timedelta(minutes=15 * index + 20),
+                    received_at=timestamp + timedelta(minutes=20),
                 )
             )
     repository = IntradayRepository(sessions)

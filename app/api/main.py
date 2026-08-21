@@ -1,12 +1,15 @@
+import logging
 import shutil
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import desc, select, text
 
@@ -16,6 +19,8 @@ from app.api.dashboard import (
     candidates as dashboard_candidates,
 )
 from app.api.dashboard import (
+    dashboard_opportunities,
+    dashboard_snapshot_status,
     dashboard_summary,
     dashboard_trade_plans,
     symbol_detail,
@@ -32,6 +37,7 @@ from app.backtest.repository import ReplayRepository
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.data.historical import CsvHistoricalProvider, SymbolMetadata
+from app.data.intraday_research import IntradayResearchBackfill
 from app.data.research_repository import ResearchRepository
 from app.data.vendor_mock import MockVendorA, MockVendorB
 from app.data.yfinance_provider import YFinanceResearchProvider
@@ -39,10 +45,13 @@ from app.database.base import EventRow, HistoricalDatasetRow, SessionLocal
 from app.intraday.intelligence import SignalIntelligence
 from app.intraday.outcomes import accuracy_buckets
 from app.intraday.repository import IntradayRepository
+from app.ml.registry import freeze_champion
+from app.ml.research_lab import champion_manifest
 from app.models.domain import SignalClass
 from app.notifications.telegram import DISCLAIMER
 from app.paper.ledger import PaperLedger
 from app.paper.repository import PaperTradeRepository
+from app.research.governance import EvidenceRepository
 from app.universe.service import UniverseRepository
 
 
@@ -50,12 +59,39 @@ from app.universe.service import UniverseRepository
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     with SessionLocal() as session:
         session.execute(text("SELECT 1"))
+    freeze_champion()
     yield
 
 
 configure_logging()
 settings = get_settings()
 app = FastAPI(title=settings.app_name, description=DISCLAIMER, lifespan=lifespan)
+request_log = logging.getLogger("app.api.latency")
+dashboard_latencies: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=500))
+
+
+@app.middleware("http")
+async def observe_dashboard_latency(request: Request, call_next: Any) -> Any:
+    started = perf_counter()
+    response = await call_next(request)
+    if request.url.path in {
+        "/dashboard/candidates",
+        "/dashboard/trade-plans",
+        "/dashboard/opportunities",
+        "/dashboard/snapshot-status",
+    }:
+        elapsed_ms = (perf_counter() - started) * 1000
+        dashboard_latencies[request.url.path].append(elapsed_ms)
+        response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
+        request_log.info(
+            "dashboard_request path=%s status=%d latency_ms=%.1f",
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+    return response
+
+
 ledger = PaperLedger()
 paper_repository = PaperTradeRepository()
 replay_repository = ReplayRepository()
@@ -63,6 +99,8 @@ research_repository = ResearchRepository()
 intraday_repository = IntradayRepository()
 signal_intelligence = SignalIntelligence()
 adaptive_decisions = AdaptiveDecisionService()
+intraday_research = IntradayResearchBackfill()
+evidence_repository = EvidenceRepository()
 universe_repository = UniverseRepository()
 
 
@@ -319,7 +357,47 @@ def research_status() -> dict[str, object]:
         "network_dependency": True,
         "production_approved": False,
         "flags": [flag.value for flag in provider.mandatory_flags],
+        "champion": champion_manifest(),
+        "ml_mode": "shadow",
+        "allow_ml_to_change_radar": False,
+        "auto_promotion": False,
+        "five_minute_latency": intraday_research.latency_report(),
+        "notice": "Bu bölüm Radar kararını etkilemez.",
     }
+
+
+@app.get("/research/evidence")
+def research_evidence() -> dict[str, object]:
+    return evidence_repository.evidence_status()
+
+
+@app.get("/research/daily")
+def research_daily(limit: int = 30) -> list[dict[str, object]]:
+    from app.database.base import DailyResearchSnapshotRow
+
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(DailyResearchSnapshotRow)
+            .order_by(DailyResearchSnapshotRow.session_date.desc())
+            .limit(min(max(limit, 1), 100))
+        ).all()
+    return [
+        {"session_date": row.session_date, "metrics": row.metrics, "deltas": row.deltas}
+        for row in rows
+    ]
+
+
+@app.get("/research/weekly")
+def research_weekly(limit: int = 12) -> list[dict[str, object]]:
+    from app.database.base import WeeklyResearchReportRow
+
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(WeeklyResearchReportRow)
+            .order_by(WeeklyResearchReportRow.week_start.desc())
+            .limit(min(max(limit, 1), 52))
+        ).all()
+    return [dict(row.payload) for row in rows]
 
 
 @app.get("/research/scan")
@@ -479,6 +557,31 @@ def dashboard_trade_plans_endpoint() -> list[dict[str, object]]:
     return dashboard_trade_plans()
 
 
+@app.get("/dashboard/opportunities")
+def dashboard_opportunities_endpoint() -> dict[str, object]:
+    return dashboard_opportunities()
+
+
+@app.get("/dashboard/snapshot-status")
+def dashboard_snapshot_status_endpoint() -> dict[str, object]:
+    return dashboard_snapshot_status()
+
+
+@app.get("/dashboard/latency")
+def dashboard_latency_endpoint() -> dict[str, dict[str, float | int | None]]:
+    def stats(values: deque[float]) -> dict[str, float | int | None]:
+        ordered = sorted(values)
+        if not ordered:
+            return {"count": 0, "p50_ms": None, "p95_ms": None}
+        return {
+            "count": len(ordered),
+            "p50_ms": round(ordered[(len(ordered) - 1) // 2], 1),
+            "p95_ms": round(ordered[max(0, (len(ordered) * 95 + 99) // 100 - 1)], 1),
+        }
+
+    return {path.rsplit("/", 1)[-1]: stats(values) for path, values in dashboard_latencies.items()}
+
+
 @app.get("/symbols/{symbol}/trade-plan")
 def symbol_trade_plan_endpoint(symbol: str) -> dict[str, object]:
     return trade_plan(symbol)
@@ -528,6 +631,11 @@ def symbol_results(symbol: str) -> list[dict[str, object]]:
 @app.get("/symbols/{symbol}/shadow-status")
 def symbol_shadow_status(symbol: str) -> dict[str, object]:
     return signal_intelligence.shadow_status(symbol)
+
+
+@app.get("/symbols/{symbol}/latest-shadow-prediction")
+def symbol_latest_shadow_prediction(symbol: str) -> dict[str, object]:
+    return signal_intelligence.latest_shadow_prediction(symbol)
 
 
 @app.get("/shadow/status")

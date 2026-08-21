@@ -5,7 +5,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database.base import Base, MlFeatureSnapshotRow, MlOutcomeRow, SignalAuditRow
+from app.database.base import (
+    Base,
+    MlFeatureSnapshotRow,
+    MlModelRow,
+    MlOutcomeRow,
+    MlPredictionRow,
+    SignalAuditRow,
+)
 from app.intraday.intelligence import SignalIntelligence
 from app.intraday.repository import IntradayRepository
 from app.ml import training
@@ -129,6 +136,62 @@ def test_signal_read_models_filters_analytics_and_shadow() -> None:
     assert status["observations"] == 2
     assert status["allow_ml_to_change_radar"] is False
     assert intelligence.shadow_status("MISSING")["reasons"]
+
+
+def test_latest_shadow_prediction_matches_latest_signal_without_changing_radar() -> None:
+    factory = database()
+    seed(factory)
+    now = datetime(2026, 8, 14, 12, tzinfo=UTC)
+    with factory.begin() as session:
+        session.add(
+            MlModelRow(
+                model_id="shadow-v2",
+                created_at=now,
+                model_type="logistic",
+                metadata_json={"maturity": "EARLY_SAMPLE"},
+            )
+        )
+        session.add_all(
+            [
+                MlPredictionRow(
+                    signal_id="s-0",
+                    model_id="shadow-v2",
+                    created_at=now + timedelta(minutes=10),
+                    predictions={"entry_probability": 0.99},
+                ),
+                MlPredictionRow(
+                    signal_id="s-1",
+                    model_id="shadow-v1",
+                    created_at=now,
+                    predictions={"entry_probability": 0.6},
+                ),
+                MlPredictionRow(
+                    signal_id="s-1",
+                    model_id="shadow-v2",
+                    created_at=now + timedelta(minutes=5),
+                    predictions={
+                        "entry_probability": 0.8,
+                        "head_quality": {"entry": {"display": "PROBABILITY"}},
+                    },
+                ),
+            ]
+        )
+    intelligence = SignalIntelligence(factory)
+    before = intelligence.symbol_results("ASELS")[0]["radar_score"]
+    result = intelligence.latest_shadow_prediction("asels")
+    after = intelligence.symbol_results("ASELS")[0]["radar_score"]
+    assert result["signal_id"] == "s-1"
+    assert result["prediction"] == {
+        "entry_probability": 0.8,
+        "head_quality": {"entry": {"display": "PROBABILITY"}},
+    }
+    assert result["model_maturity"] == "EARLY"
+    assert result["radar_decision_effect"] == "NONE"
+    assert result["allow_ml_to_change_radar"] is False
+    assert before == after == 85
+    missing = intelligence.latest_shadow_prediction("MISSING")
+    assert missing["status"] == "LEARNING"
+    assert missing["signal_id"] is None
 
 
 def test_training_threshold_trigger_and_persistence(monkeypatch) -> None:  # type: ignore[no-untyped-def]

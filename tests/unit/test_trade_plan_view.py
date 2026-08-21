@@ -45,7 +45,9 @@ def test_trade_plan_status_classification(distance: float, expected: str) -> Non
 
 def test_trade_plan_risk_reward_position_math_and_stale_warning() -> None:
     result = plan(0.1, age_minutes=180)
-    assert result["risk_reward"] == 2.5
+    # Executable target is floored to its tick, so theoretical 2.5R cannot be overstated.
+    assert result["risk_reward"] == 2.48
+    assert result["status"] == "GECERSIZ"
     assert result["stale"] is True
     assert result["position_sizing"]["allowed_risk_amount"] == 750  # type: ignore[index]
     assert result["position_sizing"]["estimated_quantity"] > 0  # type: ignore[index,operator]

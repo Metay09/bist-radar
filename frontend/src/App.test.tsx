@@ -8,6 +8,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { clearReadCacheForTests } from "./read-cache";
 
 const stamp = "2026-08-13T10:00:00Z";
 const freshness = {
@@ -88,6 +89,7 @@ const detail = {
 };
 
 beforeEach(() => {
+  clearReadCacheForTests();
   localStorage.clear();
   sessionStorage.clear();
   vi.stubGlobal(
@@ -104,10 +106,16 @@ beforeEach(() => {
                   closed_trades: 0,
                   mtm_equity: null,
                 }
-              : url.includes("/symbols/")
+              : url.includes("latest-shadow-prediction")
+                ? {
+                    status: "LEARNING",
+                    model_maturity: "INSUFFICIENT",
+                    prediction: null,
+                  }
+                : url.includes("/symbols/")
                 ? detail
-                : url.includes("trade-plans")
-                  ? [plan]
+                : url.includes("opportunities")
+                  ? { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan, snapshot_id: "s1", data_timestamp: stamp }] }
                   : url.includes("summary")
                     ? summary
                     : url.includes("candidates")
@@ -124,7 +132,10 @@ beforeEach(() => {
     ),
   );
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("dashboard UX", () => {
   it("renders mobile bottom nav and desktop sidebar landmarks", async () => {
@@ -184,10 +195,67 @@ describe("dashboard UX", () => {
     expect(screen.getByText(/Veri 90 dk eski/)).toBeInTheDocument();
     expect(screen.getByText(/Önerilen pozisyon boyutu/)).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Sinyal Geçmişi" }),
+      screen.getByRole("tab", { name: "GEÇMİŞ" }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Grafik" }));
+    fireEvent.click(screen.getByRole("tab", { name: "GRAFİK" }));
     expect(screen.getByLabelText(/Mum grafiği/)).toBeInTheDocument();
+  });
+  it("shows calibrated Shadow heads as probability and keeps uncalibrated heads as score", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve(
+              url.includes("latest-shadow-prediction")
+                ? {
+                    status: "AVAILABLE",
+                    signal_id: "latest-signal",
+                    model_maturity: "EARLY",
+                    prediction: {
+                      entry_probability: 0.812,
+                      stop_probability: 0.27,
+                      h1_probability: 0.64,
+                      h2_probability: 0.42,
+                      h3_probability: 0.2,
+                      head_quality: {
+                        entry: { display: "PROBABILITY" },
+                        h1: { display: "PROBABILITY" },
+                      },
+                    },
+                  }
+                : url.includes("/detail")
+                  ? detail
+                  : {},
+            ),
+        }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={["/symbol/ASELS"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("%81,2")).toBeInTheDocument();
+    expect(screen.getByText("%64,0")).toBeInTheDocument();
+    expect(screen.getByText("Skor 27/100")).toBeInTheDocument();
+    expect(screen.getByText("EARLY")).toBeInTheDocument();
+    expect(screen.getByText(/Radar kararını değiştirmez/)).toBeInTheDocument();
+    expect(screen.getByText("91")).toBeInTheDocument();
+  });
+  it("shows an honest learning state when the latest signal has no prediction", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    render(
+      <MemoryRouter initialEntries={["/symbol/ASELS"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText(/Henüz yeterli veri yok · model öğreniyor/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/%0,0/)).not.toBeInTheDocument();
   });
   it("renders signal mobile cards and contextual help", async () => {
     localStorage.setItem("bist-radar-tour-seen", "1");
@@ -273,5 +341,112 @@ describe("dashboard UX", () => {
         screen.getByText(/Veri servisine ulaşılamıyor/),
       ).toBeInTheDocument(),
     );
+  });
+  it("keeps the financial verdict pending until a delayed plan arrives", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    let releasePlan!: () => void;
+    const delayed = new Promise<void>((resolve) => { releasePlan = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("opportunities")) {
+        await delayed;
+        const currentPlan = { ...plan, stale: false, market_closed: false };
+        return { ok: true, json: async () => ({ snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: currentPlan, snapshot_id: "s1", data_timestamp: stamp }] }) };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("ASELS")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plan yükleniyor…").length).toBeGreaterThan(0);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("Plan seviyeleri yükleniyor").length).toBeGreaterThan(0);
+    releasePlan();
+    expect((await screen.findAllByText("Kırılım Gerçekleşti")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("198,00–201,00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("194,00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("209,00").length).toBeGreaterThan(0);
+  });
+  it("retries a failed plan request and recovers without a false invalid verdict", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.useFakeTimers();
+    let planCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("opportunities")) {
+        planCalls += 1;
+        if (planCalls === 1) return { ok: false, status: 502 };
+        const currentPlan = { ...plan, stale: false, market_closed: false };
+        return { ok: true, json: async () => ({ snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: currentPlan, snapshot_id: "s1", data_timestamp: stamp }] }) };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(planCalls).toBe(2);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Kırılım Gerçekleşti").length).toBeGreaterThan(0);
+  });
+  it("keeps candidates usable and reports a permanent plan failure", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    vi.useFakeTimers();
+    let planCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("opportunities")) { planCalls += 1; return { ok: false, status: 503 }; }
+      return { ok: true, json: async () => url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(planCalls).toBe(3);
+    expect(screen.getAllByText("ASELS").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plan verisi alınamadı").length).toBeGreaterThan(0);
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
+  });
+  it("shows invalid only when the backend explicitly returns GECERSIZ", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const invalid = { ...plan, status: "GECERSIZ", stale: false, market_closed: false };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes("opportunities") ? { snapshot_id: "s1", data_timestamp: stamp, opportunities: [{ candidate, plan: invalid, snapshot_id: "s1", data_timestamp: stamp }] } : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
+    })));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("İşlem Uygun Değil")).length).toBeGreaterThan(0);
+  });
+  it("activates deterministic priority sorting once after the coherent snapshot arrives", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const waiting = { ...candidate, symbol: "WAIT", radar_score: 94 };
+    const ready = { ...candidate, symbol: "READY", radar_score: 81 };
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("opportunities")) {
+        await delayed;
+        return { ok: true, json: async () => ({
+          snapshot_id: "sort-snapshot", data_timestamp: stamp,
+          opportunities: [
+            { candidate: waiting, plan: { ...plan, symbol: "WAIT", status: "GIRIS_BEKLENIYOR" }, snapshot_id: "sort-snapshot", data_timestamp: stamp },
+            { candidate: ready, plan: { ...plan, symbol: "READY", status: "GIRIS_BOLGESINDE" }, snapshot_id: "sort-snapshot", data_timestamp: stamp },
+          ],
+        }) };
+      }
+      return { ok: true, json: async () => url.includes("candidates") ? [waiting, ready] : url.includes("dashboard/summary") ? summary : [] };
+    }));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    await screen.findAllByText("WAIT");
+    const symbols = () => Array.from(document.querySelectorAll(".mobile-signals .signal-card .card-link strong")).map((node) => node.textContent);
+    expect(symbols()).toEqual(["WAIT", "READY"]);
+    release();
+    await waitFor(() => expect(symbols()).toEqual(["READY", "WAIT"]));
+  });
+  it("suppresses an older unrelated plan snapshot", async () => {
+    localStorage.setItem("bist-radar-tour-seen", "1");
+    const oldPlan = { ...plan, timestamp: "2026-08-13T09:45:00Z", stale: false };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url.includes("opportunities")
+        ? { snapshot_id: "old", data_timestamp: oldPlan.timestamp, opportunities: [{ candidate, plan: oldPlan, snapshot_id: "old", data_timestamp: oldPlan.timestamp }] }
+        : url.includes("candidates") ? [candidate] : url.includes("dashboard/summary") ? summary : [],
+    })));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect((await screen.findAllByText("Plan güncelleniyor")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("198,00–201,00")).not.toBeInTheDocument();
+    expect(screen.queryByText("İşlem Uygun Değil")).not.toBeInTheDocument();
   });
 });

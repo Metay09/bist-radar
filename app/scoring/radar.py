@@ -66,23 +66,31 @@ def score_radar(
         Trend.DOWNTREND: 2,
         Trend.STRONG_DOWNTREND: 0,
     }[trend]
-    momentum = min(
-        15,
-        max(
-            0,
-            round(
-                (float(f["rsi"]) - 40) / 3
-                + (5 if float(f["macd_histogram"]) > 0 else 0)
-                + (3 if float(f["roc"]) > 0 else 0)
-            ),
-        ),
-    )
+    # Smooth enough that merely-positive, correlated indicators do not all saturate.
+    momentum = min(15, max(0, round((float(f["rsi"]) - 40) / 4)))
+    if float(f["macd_histogram"]) > 0:
+        momentum += 2
+    if float(f["roc"]) > 0:
+        momentum += 1
+    momentum = min(15, momentum)
     rv = float(f["rvol"])
-    rvol_score = 20 if rv >= 3 else 18 if rv >= 2 else 15 if rv >= 1.5 else 10 if rv >= 1 else 4
+    rvol_score = (
+        20
+        if rv >= 5
+        else 17
+        if rv >= 3
+        else 14
+        if rv >= 2
+        else 11
+        if rv >= 1.5
+        else 7
+        if rv >= 1
+        else 2
+    )
     breakout_score = (
         15
-        if bool(f["breakout"]) and rv >= 1.5 and float(f["close_quality"]) >= 0.65
-        else 5
+        if bool(f["breakout"]) and float(f["close_quality"]) >= 0.8
+        else 7
         if bool(f["breakout"])
         else 2
     )
@@ -98,7 +106,7 @@ def score_radar(
             MarketRegime.NEUTRAL: 6,
             MarketRegime.RISK_OFF: 1,
         }[regime],
-        "risk_reward": min(10, round(risk_reward * 3.5)),
+        "risk_reward": min(10, max(4, round((risk_reward - 1) * 3))),
     }
     total = min(100, sum(components.values()))
     reasons = [

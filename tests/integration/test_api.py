@@ -14,6 +14,7 @@ from app.api.main import (
     radar_symbol,
     ready,
     signals,
+    symbol_latest_shadow_prediction,
     system_status,
 )
 
@@ -47,6 +48,15 @@ def test_intraday_and_shadow_read_only_endpoints(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("app.api.main.intraday_repository.models", lambda: [])
     monkeypatch.setattr("app.api.main.intraday_repository.predictions", lambda: [])
     monkeypatch.setattr("app.api.main.intraday_repository.evaluations", lambda: [])
+    monkeypatch.setattr(
+        "app.api.main.signal_intelligence.latest_shadow_prediction",
+        lambda symbol: {
+            "symbol": symbol,
+            "mode": "SHADOW",
+            "radar_decision_effect": "NONE",
+            "allow_ml_to_change_radar": False,
+        },
+    )
     assert intraday_status()["strategy_id"] == "radar-intraday-v1"
     assert "candidates" in intraday_scan()
     with pytest.raises(HTTPException):
@@ -56,3 +66,6 @@ def test_intraday_and_shadow_read_only_endpoints(monkeypatch: pytest.MonkeyPatch
     assert isinstance(ml_models(), list)
     assert isinstance(ml_predictions(), list)
     assert isinstance(ml_evaluation(), list)
+    latest = symbol_latest_shadow_prediction("ASELS")
+    assert latest["radar_decision_effect"] == "NONE"
+    assert latest["allow_ml_to_change_radar"] is False

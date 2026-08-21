@@ -1,11 +1,12 @@
+import logging
 from datetime import UTC, datetime, time
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, func, select
 
-from app.core.config import get_settings
 from app.data.research import load_universe
 from app.data.research_repository import ResearchRepository
 from app.database.base import (
@@ -19,12 +20,34 @@ from app.database.base import (
     WorkerStateRow,
 )
 from app.intraday.repository import IntradayRepository
-from app.risk.trade_plan_view import build_research_trade_plan
+from app.market.bist import canonical_bist_symbol
+
+log = logging.getLogger(__name__)
+
+ACTION_PRIORITY = {
+    "BREAKOUT_ONAYI": 0,
+    "GIRIS_BOLGESINDE": 1,
+    "GIRIS_BEKLENIYOR": 2,
+    "KACMIS_KOVALAMA": 3,
+    "GECERSIZ": 4,
+}
+
+
+def _radar_snapshot_id(data_timestamp: object) -> str:
+    return sha256(f"radar:{data_timestamp}".encode()).hexdigest()[:24]
 
 
 def market_open(now: datetime | None = None) -> bool:
     local = (now or datetime.now(UTC)).astimezone(ZoneInfo("Europe/Istanbul"))
     return local.weekday() < 5 and time(10, 0) <= local.time() <= time(18, 10)
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return None
 
 
 def freshness(timestamp: datetime | None, stale_minutes: int = 45) -> dict[str, object]:
@@ -85,6 +108,10 @@ def dashboard_summary() -> dict[str, object]:
 
 def candidates() -> list[dict[str, object]]:
     report = ResearchRepository().latest_report("intraday_scan", require_candidates=True) or {}
+    return _candidates_from_report(report)
+
+
+def _candidates_from_report(report: dict[str, object]) -> list[dict[str, object]]:
     rows = report.get("candidates", [])
     if not isinstance(rows, list):
         return []
@@ -115,18 +142,51 @@ def _unique_candidates(rows: list[object]) -> list[dict[str, object]]:
         if not isinstance(raw, dict):
             continue
         row = {str(key): value for key, value in raw.items()}
-        symbol = str(row.get("symbol", "")).strip().upper()
+        symbol = canonical_bist_symbol(row.get("symbol", ""))
         if not symbol:
             continue
         row["symbol"] = symbol
+        strategies = row.get("matched_strategies")
+        strategy = row.get("strategy_id")
+        matched = set(strategies if isinstance(strategies, list) else [])
+        if strategy:
+            matched.add(str(strategy))
         current = newest.get(symbol)
-        if current is None or _candidate_timestamp(row) > _candidate_timestamp(current):
-            newest[symbol] = row
+        if current is not None:
+            current_matched = current.get("matched_strategies")
+            matched.update(current_matched if isinstance(current_matched, list) else [])
+            current_strategy = current.get("strategy_id")
+            if current_strategy:
+                matched.add(str(current_strategy))
 
-    def rank(row: dict[str, object]) -> tuple[int, str]:
+        # Newest observation wins; ties use score then confidence, never input order.
+        def preference(item: dict[str, object]) -> tuple[int, datetime, float, float]:
+            score = item.get("radar_score", 0)
+            confidence = item.get("confidence", item.get("data_quality", 0))
+            return (
+                -ACTION_PRIORITY.get(str(item.get("action_state", "")), 5),
+                _candidate_timestamp(item),
+                float(score) if isinstance(score, (int, float)) else 0,
+                float(confidence) if isinstance(confidence, (int, float)) else 0,
+            )
+
+        winner = row if current is None or preference(row) > preference(current) else current
+        winner["matched_strategies"] = sorted(matched)
+        newest[symbol] = winner
+        if current is not None:
+            log.debug("duplicate_symbol_merged symbol=%s strategies=%s", symbol, sorted(matched))
+
+    def rank(row: dict[str, object]) -> tuple[int, float, float, int, str]:
         value = row.get("radar_score", 0)
         score = int(value) if isinstance(value, (int, float, str)) else 0
-        return -score, str(row["symbol"])
+        distance = row.get("breakout_distance", float("inf"))
+        return (
+            ACTION_PRIORITY.get(str(row.get("action_state", "")), 5),
+            abs(float(distance)) if isinstance(distance, (int, float)) else float("inf"),
+            -_candidate_timestamp(row).timestamp(),
+            -score,
+            str(row["symbol"]),
+        )
 
     return sorted(newest.values(), key=rank)
 
@@ -141,28 +201,84 @@ def trade_plan(symbol: str) -> dict[str, object]:
             "research_only": True,
             "explanation": ["Henüz yeterli aday ve risk bağlamı yok."],
         }
-    with SessionLocal() as session:
-        lows = session.scalars(
-            select(MarketBarRow.low)
-            .where(MarketBarRow.symbol == canonical, MarketBarRow.timeframe == "15m")
-            .order_by(desc(MarketBarRow.timestamp))
-            .limit(10)
-        ).all()
-    settings = get_settings()
-    plan = build_research_trade_plan(
-        candidate,
-        list(reversed(lows)),
-        account_equity=Decimal(str(settings.paper_default_account_equity)),
-        risk_percent=Decimal(str(settings.max_risk_per_trade_percent)),
-        max_position_percent=Decimal(str(settings.max_position_percent)),
-        stale_minutes=settings.intraday_stale_minutes,
-    )
-    plan["market_closed"] = not market_open()
-    return plan
+    stored = _persisted_plans([candidate]).get(canonical)
+    if stored is not None:
+        return stored
+    return {
+        "symbol": canonical,
+        "status": "PLAN_UNAVAILABLE",
+        "research_only": True,
+        "explanation": ["Persist edilmiş işlem planı henüz hazır değil."],
+    }
 
 
 def dashboard_trade_plans() -> list[dict[str, object]]:
-    return [trade_plan(str(row["symbol"])) for row in candidates()]
+    return list(_persisted_plans(candidates()).values())
+
+
+def _persisted_plans(candidate_rows: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    closed = not market_open()
+    result: dict[str, dict[str, object]] = {}
+    missing_ids: dict[str, str] = {}
+    for candidate in candidate_rows:
+        plan = candidate.get("trade_plan_snapshot")
+        if isinstance(plan, dict):
+            result[str(candidate["symbol"])] = {str(key): value for key, value in plan.items()} | {
+                "market_closed": closed
+            }
+        elif candidate.get("signal_id"):
+            missing_ids[str(candidate["signal_id"])] = str(candidate["symbol"])
+    if missing_ids:
+        with SessionLocal() as session:
+            rows = session.scalars(
+                select(MlFeatureSnapshotRow).where(MlFeatureSnapshotRow.signal_id.in_(missing_ids))
+            ).all()
+        for row in rows:
+            plan = row.features.get("trade_plan_snapshot")
+            if isinstance(plan, dict):
+                result[missing_ids[row.signal_id]] = {
+                    str(key): value for key, value in plan.items()
+                } | {"market_closed": closed}
+    return result
+
+
+def dashboard_opportunities() -> dict[str, object]:
+    """Coherent candidate + backend-owned plan view from a single completed scan."""
+    report = ResearchRepository().latest_report("intraday_scan", require_candidates=True) or {}
+    candidate_rows = _candidates_from_report(report)
+    plans = _persisted_plans(candidate_rows)
+    data_timestamp = report.get("data_timestamp")
+    if data_timestamp is None and candidate_rows:
+        data_timestamp = max(_candidate_timestamp(row) for row in candidate_rows)
+    snapshot_id = _radar_snapshot_id(data_timestamp)
+    return {
+        "snapshot_id": snapshot_id,
+        "data_timestamp": data_timestamp,
+        "opportunities": [
+            {
+                "candidate": row,
+                "plan": plans.get(str(row["symbol"])),
+                "snapshot_id": snapshot_id,
+                "data_timestamp": data_timestamp,
+            }
+            for row in candidate_rows
+        ],
+    }
+
+
+def dashboard_snapshot_status() -> dict[str, object]:
+    """Return persisted snapshot metadata only; never run financial computation."""
+    with SessionLocal() as session:
+        job = session.get(WorkerStateRow, "intraday_radar_scan")
+    data_timestamp = job.last_processed_bar if job else None
+    generated_at = job.last_success_at if job else None
+    return {
+        "snapshot_id": _radar_snapshot_id(data_timestamp),
+        "data_timestamp": data_timestamp,
+        "generated_at": generated_at,
+        "market_open": market_open(),
+        "freshness": freshness(_parse_timestamp(data_timestamp)),
+    }
 
 
 def symbol_detail(symbol: str, limit: int = 160) -> dict[str, object] | None:
