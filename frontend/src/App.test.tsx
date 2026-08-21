@@ -8,6 +8,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { clearReadCacheForTests } from "./read-cache";
 
 const stamp = "2026-08-13T10:00:00Z";
 const freshness = {
@@ -88,6 +89,7 @@ const detail = {
 };
 
 beforeEach(() => {
+  clearReadCacheForTests();
   localStorage.clear();
   sessionStorage.clear();
   vi.stubGlobal(

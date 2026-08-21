@@ -68,3 +68,6 @@
   .tracking-group:first-child { grid-column:1/-1; }
 }
 @media (min-width: 1200px) { main { max-width:1320px!important; } .tracking-groups { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+ .read-status { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 14px;color:var(--muted);font-size:12px; }
+ .read-status button { min-height:34px;padding:6px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);cursor:pointer; }
+ .read-status button:disabled { opacity:.55;cursor:wait; }

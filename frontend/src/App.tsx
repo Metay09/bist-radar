@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Link,
   NavLink,
@@ -12,11 +12,13 @@ import type {
   Bar,
   Candidate,
   Detail,
+  Opportunity,
   PaperTrade,
   Signal,
   TradePlan,
 } from "./types";
 import { Icon } from "./design-system/Icon";
+import { cachedRequest, readCached } from "./read-cache";
 
 const trNumber = (n: number, d = 2) =>
   new Intl.NumberFormat("tr-TR", {
@@ -26,8 +28,9 @@ const trNumber = (n: number, d = 2) =>
 const trDate = (v: string | null | undefined) =>
   v
     ? new Intl.DateTimeFormat("tr-TR", {
-        dateStyle: "short",
-        timeStyle: "short",
+      dateStyle: "short",
+      timeStyle: "short",
+      timeZone: "Europe/Istanbul",
       }).format(new Date(v))
     : "Veri yok";
 const labels: Record<string, string> = {
@@ -137,39 +140,58 @@ const tourSteps = [
   ],
 ];
 
-type LoadOptions = { retryDelays?: number[] };
+type LoadOptions = { retryDelays?: number[]; cacheKey?: string };
 
 function useLoad<T>(
-  load: () => Promise<T>,
+  load: (signal?: AbortSignal) => Promise<T>,
   deps: unknown[] = [],
   options: LoadOptions = {},
 ) {
-  const [data, setData] = useState<T>();
+  const cacheKey = options.cacheKey;
+  const initial = useRef(cacheKey ? readCached<T>(cacheKey) : undefined);
+  const [data, setData] = useState<T | undefined>(() => initial.current?.data);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initial.current);
+  const [refreshing, setRefreshing] = useState(Boolean(initial.current));
+  const [retrying, setRetrying] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const supersede = useRef(false);
   const retryDelays = options.retryDelays || [];
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
-    setLoading(true);
+    const cached = cacheKey ? readCached<T>(cacheKey) : undefined;
+    if (cached) setData(cached.data);
+    setLoading(!cached);
+    setRefreshing(Boolean(cached));
+    setRetrying(false);
     setError("");
     const run = () => {
-      load()
-        .then((x) => {
+      const request = cacheKey
+        ? cachedRequest(cacheKey, (signal) => load(signal), supersede.current).then((entry) => entry.data)
+        : load();
+      supersede.current = false;
+      request.then((x) => {
           if (!live) return;
           setData(x);
           setError("");
           setLoading(false);
+          setRefreshing(false);
+          setRetrying(false);
         })
         .catch(() => {
           if (!live) return;
           const delay = retryDelays[attempt++];
-          if (delay != null) timer = setTimeout(run, delay);
+          if (delay != null) {
+            setRetrying(true);
+            timer = setTimeout(run, delay);
+          }
           else {
             setError("Veri servisine ulaşılamıyor");
             setLoading(false);
+            setRefreshing(false);
+            setRetrying(false);
           }
         });
     };
@@ -181,7 +203,16 @@ function useLoad<T>(
     // Custom hook callers define the reload boundary explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, reloadKey]);
-  return { data, error, loading, reload: () => setReloadKey((x) => x + 1) };
+  const reload = useCallback(() => setReloadKey((x) => x + 1), []);
+  const reloadLatest = useCallback(() => {
+    supersede.current = true;
+    setReloadKey((x) => x + 1);
+  }, []);
+  return {
+    data, error, loading, refreshing, retrying,
+    reload,
+    reloadLatest,
+  };
 }
 const badge = (c: string) =>
   c.includes("VERY")
@@ -257,6 +288,7 @@ function AdaptiveDecisionCard() {
   const result = useLoad(
     () => (symbol ? api.adaptive(symbol) : Promise.reject()),
     [symbol],
+    symbol ? { cacheKey: `adaptive:${symbol}` } : {},
   );
   if (!symbol || !result.data) return null;
   const d = result.data,
@@ -348,6 +380,7 @@ function AdaptiveAnalytics() {
   const result = useLoad(
     () => (enabled ? api.adaptiveAnalytics() : Promise.reject()),
     [enabled],
+    enabled ? { cacheKey: "analysis-adaptive" } : {},
   );
   if (!enabled || !result.data) return null;
   const d = result.data;
@@ -499,20 +532,26 @@ const radarState = {
   query: "bist-radar-query",
   strength: "bist-radar-strength",
   scroll: "bist-radar-scroll",
+  sort: "bist-radar-sort",
 };
 
 function Radar() {
-  const summary = useLoad(api.summary);
-  const universe = useLoad(api.universe);
-  const rows = useLoad(api.candidates);
-  const opportunities = useLoad(api.opportunities, [], { retryDelays: [1000, 3000] });
+  const summary = useLoad(api.summary, [], { cacheKey: "dashboard-summary" });
+  const universe = useLoad(api.universe, [], { cacheKey: "universe-summary" });
+  const rows = useLoad(api.candidates, [], { cacheKey: "radar-candidates" });
+  const opportunities = useLoad((signal) => api.opportunities(signal), [], {
+    cacheKey: "radar-opportunities", retryDelays: [1000, 3000],
+  });
+  const snapshot = useLoad((signal) => api.snapshotStatus(signal), [], {
+    cacheKey: "radar-snapshot-status", retryDelays: [1000, 3000],
+  });
   const [query, setQuery] = useState(
     () => sessionStorage.getItem(radarState.query) || "",
   );
   const [strength, setStrength] = useState(
     () => sessionStorage.getItem(radarState.strength) || "ALL",
   );
-  const [sort, setSort] = useState("priority");
+  const [sort, setSort] = useState(() => sessionStorage.getItem(radarState.sort) || "priority");
   const restored = useRef(false);
   useEffect(() => {
     sessionStorage.setItem(radarState.query, query);
@@ -520,6 +559,32 @@ function Radar() {
   useEffect(() => {
     sessionStorage.setItem(radarState.strength, strength);
   }, [strength]);
+  useEffect(() => { sessionStorage.setItem(radarState.sort, sort); }, [sort]);
+  const reloadSnapshot = snapshot.reload;
+  const reloadOpportunityLatest = opportunities.reloadLatest;
+  const latestOpportunitySnapshot = useRef(opportunities.data?.snapshot_id);
+  useEffect(() => { latestOpportunitySnapshot.current = opportunities.data?.snapshot_id; }, [opportunities.data?.snapshot_id]);
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== "visible") return;
+      reloadSnapshot();
+    };
+    const timer = setInterval(check, snapshot.data?.market_open ? 25_000 : 5 * 60_000);
+    const foreground = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", foreground);
+    window.addEventListener("focus", foreground);
+    window.addEventListener("online", foreground);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", foreground);
+      window.removeEventListener("focus", foreground);
+      window.removeEventListener("online", foreground);
+    };
+  }, [snapshot.data?.market_open, reloadSnapshot]);
+  useEffect(() => {
+    if (snapshot.data?.snapshot_id && latestOpportunitySnapshot.current &&
+        snapshot.data.snapshot_id !== latestOpportunitySnapshot.current) reloadOpportunityLatest();
+  }, [snapshot.data?.snapshot_id, reloadOpportunityLatest]);
   useEffect(() => {
     if (restored.current || !summary.data || !rows.data) return;
     restored.current = true;
@@ -531,12 +596,14 @@ function Radar() {
         ),
       );
   }, [summary.data, rows.data]);
+  const coherentRows = opportunities.data?.opportunities.map((x) => x.candidate);
+  const displayRows = coherentRows || rows.data;
   const planMap = useMemo(() => Object.fromEntries(
-    (opportunities.data?.opportunities || []).map((x) => [x.plan.symbol, x.plan]),
+    (opportunities.data?.opportunities || []).filter((x) => x.plan).map((x) => [x.candidate.symbol, x.plan!]),
   ), [opportunities.data]);
   const filtered = useMemo(
     () => {
-      const result = [...(rows.data || [])]
+      const result = [...(displayRows || [])]
         .filter((x) => x.symbol.includes(query.toUpperCase()))
         .filter(
           (x) =>
@@ -556,7 +623,7 @@ function Radar() {
         return (priorities[planMap[a.symbol]?.status] ?? 5) - (priorities[planMap[b.symbol]?.status] ?? 5) || b.radar_score - a.radar_score || a.symbol.localeCompare(b.symbol);
       });
     },
-    [rows.data, query, strength, sort, planMap, opportunities.data],
+    [displayRows, query, strength, sort, planMap, opportunities.data],
   );
   if (!summary.data) return <State error={summary.error} />;
   const s = summary.data;
@@ -569,8 +636,12 @@ function Radar() {
       <div className={`fresh ${s.freshness.state.toLowerCase()}`}>
         <b>{s.freshness.label}</b>
         <span>
-          {s.provider} · {trDate(s.data_timestamp)}
+          {s.provider} · {trDate(opportunities.data?.data_timestamp || s.data_timestamp)}
         </span>
+      </div>
+      <div className="read-status" aria-live="polite">
+        {opportunities.retrying ? "↻ Bağlantı yeniden deneniyor" : opportunities.refreshing ? "↻ Güncelleniyor" : opportunities.error && opportunities.data ? "⚠ Son geçerli veri gösteriliyor" : s.market_open ? "● Güncel" : "Piyasa kapalı"}
+        <button onClick={() => { snapshot.reload(); opportunities.reload(); }} disabled={opportunities.refreshing}>↻ Yenile</button>
       </div>
       <div className="warning">
         Yahoo/yfinance verileri araştırma amaçlı ve doğrulanmamış kaynaktır.{" "}
@@ -651,7 +722,7 @@ function Radar() {
           <CandidateList
             rows={filtered}
             plans={planMap}
-            planState={opportunities.error ? "error" : opportunities.loading ? "loading" : "ready"}
+            planState={opportunities.error && !opportunities.data ? "error" : opportunities.loading ? "loading" : "ready"}
           />
         ) : (
           <State empty />
@@ -1050,13 +1121,32 @@ function CandleChart({ bars, plan }: { bars: Bar[]; plan?: TradePlan }) {
   );
 }
 
+function WarmStock({ opportunity }: { opportunity: Opportunity }) {
+  const { candidate, plan } = opportunity;
+  return <>
+    <Header title={candidate.symbol} subtitle="Son Radar görünümü · detay güncelleniyor" />
+    <section className="decision-hero warm-detail">
+      <div><span className="eyebrow">SON RADAR GÖRÜNÜMÜ</span><h2>{plan ? planLabel(plan) : "Plan güncelleniyor"}</h2><p>Detay verileri arka planda güncelleniyor…</p></div>
+      <div className="hero-score"><small>RADAR</small><strong>{candidate.radar_score}</strong><span>{trLabel(candidate.classification)}</span></div>
+    </section>
+    {plan?.entry_zone_low != null && <div className="quick-levels">
+      <Metric label="ALIM" value={`${trNumber(plan.entry_zone_low)}–${trNumber(plan.entry_zone_high!)}`} />
+      <Metric label="STOP" value={trNumber(plan.stop_price!)} tone="stop" />
+      <Metric label="H1" value={plan.targets?.[0] ? trNumber(plan.targets[0].price) : "—"} tone="target" />
+    </div>}
+  </>;
+}
+
 function Stock() {
   const { symbol = "" } = useParams();
-  const result = useLoad(() => api.detail(symbol), [symbol]);
-  const results = useLoad(() => api.symbolResults(symbol), [symbol]);
-  const shadow = useLoad(() => api.symbolShadow(symbol), [symbol]);
-  const latestShadow = useLoad(() => api.latestSymbolShadow(symbol), [symbol]);
+  const warm = readCached<import("./types").OpportunityReadModel>("radar-opportunities")
+    ?.data.opportunities.find((item) => item.candidate.symbol === symbol);
+  const result = useLoad(() => api.detail(symbol), [symbol], { cacheKey: `symbol-detail:${symbol}` });
+  const results = useLoad(() => api.symbolResults(symbol), [symbol], { cacheKey: `symbol-results:${symbol}` });
+  const shadow = useLoad(() => api.symbolShadow(symbol), [symbol], { cacheKey: `symbol-shadow:${symbol}` });
+  const latestShadow = useLoad(() => api.latestSymbolShadow(symbol), [symbol], { cacheKey: `symbol-latest-shadow:${symbol}` });
   const [tab, setTab] = useState("summary");
+  if (!result.data && warm) return <WarmStock opportunity={warm} />;
   if (!result.data) return <State error={result.error} />;
   const d: Detail = result.data,
     c = d.candidate,
@@ -1273,8 +1363,8 @@ function Signals() {
     const value = p.toString();
     return value ? `?${value}` : "";
   };
-  const result = useLoad(() => api.signals(query()), [bucket, status]);
-  const daily = useLoad(api.daily);
+  const result = useLoad(() => api.signals(query()), [bucket, status], { cacheKey: `history:${query()}` });
+  const daily = useLoad(api.daily, [], { cacheKey: "history-daily" });
   const days = Array.isArray(daily.data) ? daily.data : [];
   const latest = days[0] || {};
   return (
@@ -1496,7 +1586,7 @@ function SignalHistory({ signal: s }: { signal: Signal }) {
   );
 }
 function Tracking() {
-  const signals = useLoad(() => api.signals("?limit=50"));
+  const signals = useLoad(() => api.signals("?limit=50"), [], { cacheKey: "tracking-signals" });
   const rows = signals.data || [];
   const groups = [
     ["ALIM İÇİN HAZIR", ["ENTRY_READY", "GIRIS_BOLGESINDE", "BREAKOUT_ONAYI"]],
@@ -1521,8 +1611,8 @@ function Tracking() {
   </>;
 }
 function Portfolio({ embedded = false }: { embedded?: boolean }) {
-  const result = useLoad(api.performance);
-  const trades = useLoad(api.trades);
+  const result = useLoad(api.performance, [], { cacheKey: "tracking-performance" });
+  const trades = useLoad(api.trades, [], { cacheKey: "tracking-trades" });
   const d = result.data;
   const rows = trades.data || [];
   return (
@@ -1619,9 +1709,9 @@ function TradeSection({ title, rows }: { title: string; rows: PaperTrade[] }) {
   );
 }
 function Analysis() {
-  const ml = useLoad(api.ml);
-  const acc = useLoad(api.accuracy);
-  const evidence = useLoad(api.evidence);
+  const ml = useLoad(api.ml, [], { cacheKey: "analysis-ml" });
+  const acc = useLoad(api.accuracy, [], { cacheKey: "analysis-accuracy" });
+  const evidence = useLoad(api.evidence, [], { cacheKey: "analysis-evidence" });
   const ready = Number(ml.data?.training_eligible || 0) > 0;
   return (
     <>
@@ -1773,9 +1863,9 @@ function Analysis() {
   );
 }
 function System() {
-  const sys = useLoad(api.system);
-  const sum = useLoad(api.summary);
-  const universe = useLoad(api.universe);
+  const sys = useLoad(api.system, [], { cacheKey: "system-overview" });
+  const sum = useLoad(api.summary, [], { cacheKey: "dashboard-summary" });
+  const universe = useLoad(api.universe, [], { cacheKey: "universe-summary" });
   const jobs = Array.isArray(sys.data?.worker_jobs)
     ? (sys.data.worker_jobs as Record<string, unknown>[])
     : [];

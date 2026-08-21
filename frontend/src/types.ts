@@ -55,7 +55,7 @@ export type TradePlan = {
 };
 export type Opportunity = {
   candidate: Candidate;
-  plan: TradePlan;
+  plan: TradePlan | null;
   snapshot_id: string;
   data_timestamp: string | null;
 };
@@ -63,6 +63,13 @@ export type OpportunityReadModel = {
   snapshot_id: string;
   data_timestamp: string | null;
   opportunities: Opportunity[];
+};
+export type SnapshotStatus = {
+  snapshot_id: string;
+  data_timestamp: string | null;
+  generated_at: string | null;
+  market_open: boolean;
+  freshness: Freshness;
 };
 export type Summary = {
   provider: string;

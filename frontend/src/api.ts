@@ -8,8 +8,8 @@ import type {
   Summary,
   TradePlan,
 } from "./types";
-const get = async <T>(path: string): Promise<T> => {
-  const response = await fetch(`/api${path}`);
+const get = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
+  const response = await fetch(`/api${path}`, { signal });
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json() as Promise<T>;
 };
@@ -18,7 +18,8 @@ export const api = {
   universe: () => get<Record<string, unknown>>("/universe/summary"),
   candidates: () => get<Candidate[]>("/dashboard/candidates"),
   tradePlans: () => get<TradePlan[]>("/dashboard/trade-plans"),
-  opportunities: () => get<OpportunityReadModel>("/dashboard/opportunities"),
+  opportunities: (signal?: AbortSignal) => get<OpportunityReadModel>("/dashboard/opportunities", signal),
+  snapshotStatus: (signal?: AbortSignal) => get<import("./types").SnapshotStatus>("/dashboard/snapshot-status", signal),
   tradePlan: (s: string) => get<TradePlan>(`/symbols/${s}/trade-plan`),
   detail: (s: string) => get<Detail>(`/symbols/${s}/detail`),
   adaptive: (s: string) =>
