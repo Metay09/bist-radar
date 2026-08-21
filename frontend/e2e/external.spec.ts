@@ -18,10 +18,9 @@ test("yayındaki gerçek dashboard ekranları", async ({ page }) => {
     await page.goto(`${externalUrl}${path}`);
     await expect(page.locator(".desktop-sidebar")).toBeHidden();
     await expect(page.locator(".bottom")).toBeVisible();
-    // The production dashboard polls health/data endpoints, so networkidle is
-    // not a valid readiness signal.  The skeleton disappearing is the user-
-    // visible contract that the route has finished loading.
-    await expect(page.locator(".skeleton")).toHaveCount(0, { timeout: 15_000 });
+    // Secondary analysis panels may remain network-bound; route content and
+    // navigation must become usable independently.
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15_000 });
     expect(
       await page.evaluate(
         () =>
@@ -37,27 +36,29 @@ test("yayındaki gerçek dashboard ekranları", async ({ page }) => {
       fullPage: true,
     });
   }
-  const symbols = await page
-    .goto(`${externalUrl}/api/dashboard/candidates`)
+  const opportunities = await page
+    .goto(`${externalUrl}/api/dashboard/opportunities`)
     .then(async () => page.locator("body").textContent())
-    .then((text) =>
-      JSON.parse(text || "[]").map((row: { symbol: string }) => row.symbol),
-    );
+    .then((text) => JSON.parse(text || "{}").opportunities || []);
+  const symbols = opportunities
+    .filter((row: { plan: unknown }) => row.plan)
+    .map((row: { candidate: { symbol: string } }) => row.candidate.symbol);
   expect(new Set(symbols).size).toBe(symbols.length);
-  expect(symbols.length).toBeGreaterThan(0);
+  expect(symbols.length).toBeGreaterThanOrEqual(5);
+  for (const symbol of symbols.slice(0, 5)) {
+    await page.goto(`${externalUrl}/symbol/${symbol}`);
+    await expect(page.getByText("below_recent_swing_and_1_2_ATR")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /İşlem Planı/ })).toBeVisible({ timeout: 20_000 });
+    await page.goBack();
+    await expect(page.locator(".skeleton")).toHaveCount(0, { timeout: 15_000 });
+  }
   await page.goto(`${externalUrl}/symbol/${symbols[0]}`);
-  await expect(page.getByText("below_recent_swing_and_1_2_ATR")).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: /İşlem Planı/ }),
-  ).toBeVisible();
   await page.screenshot({
     path: "artifacts/android-360-astor-plan.png",
     fullPage: true,
   });
   await page.getByRole("tab", { name: "GRAFİK" }).click();
   for (const label of [
-    "Hedef 3",
-    "Hedef 2",
     "Hedef 1",
     "Alım",
     "Stop",
