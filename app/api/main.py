@@ -20,6 +20,7 @@ from app.api.dashboard import (
 )
 from app.api.dashboard import (
     dashboard_opportunities,
+    dashboard_snapshot_status,
     dashboard_summary,
     dashboard_trade_plans,
     symbol_detail,
@@ -77,6 +78,7 @@ async def observe_dashboard_latency(request: Request, call_next: Any) -> Any:
         "/dashboard/candidates",
         "/dashboard/trade-plans",
         "/dashboard/opportunities",
+        "/dashboard/snapshot-status",
     }:
         elapsed_ms = (perf_counter() - started) * 1000
         dashboard_latencies[request.url.path].append(elapsed_ms)
@@ -558,6 +560,11 @@ def dashboard_trade_plans_endpoint() -> list[dict[str, object]]:
 @app.get("/dashboard/opportunities")
 def dashboard_opportunities_endpoint() -> dict[str, object]:
     return dashboard_opportunities()
+
+
+@app.get("/dashboard/snapshot-status")
+def dashboard_snapshot_status_endpoint() -> dict[str, object]:
+    return dashboard_snapshot_status()
 
 
 @app.get("/dashboard/latency")

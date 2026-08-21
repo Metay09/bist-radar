@@ -118,6 +118,9 @@ class IntradayResearchService:
                         "disposition": disposition,
                         "action_state": plan.get("status", "GECERSIZ"),
                         "risk_reward": plan.get("risk_reward"),
+                        # The worker owns financial computation. Dashboard reads must only
+                        # expose this immutable, completed-bar plan snapshot.
+                        "trade_plan_snapshot": plan,
                     }
                 )
 
@@ -140,6 +143,7 @@ class IntradayResearchService:
             "strategy_id": "radar-intraday-v1",
             "provider": "yfinance-research",
             "research_only": True,
+            "generated_at": current,
             "data_timestamp": max(
                 (row["timestamp"] for row in candidates),
                 default=None,  # type: ignore[type-var]

@@ -153,16 +153,46 @@ class SignalIntelligence:
     def symbol_results(self, symbol: str) -> list[dict[str, Any]]:
         return self.records(symbol=symbol, page_size=100)[0]
 
+    def _analysis_rows(self) -> list[dict[str, Any]]:
+        """Load analytics truth in three bounded set queries, not page-by-page rereads."""
+        with self.session_factory() as session:
+            signals = session.scalars(select(MlFeatureSnapshotRow)).all()
+            outcomes = session.scalars(
+                select(MlOutcomeRow).where(MlOutcomeRow.horizon == "120m")
+            ).all()
+            audits = session.scalars(select(SignalAuditRow)).all()
+        outcome_by_signal = {row.signal_id: row for row in outcomes}
+        audit_by_signal = {row.signal_id: row for row in audits}
+        result: list[dict[str, Any]] = []
+        for signal in signals:
+            features = dict(signal.features)
+            score = int(features.get("radar_score", 0))
+            audit = audit_by_signal.get(signal.signal_id)
+            outcome = outcome_by_signal.get(signal.signal_id)
+            result.append(
+                features
+                | {
+                    "signal_timestamp": signal.signal_time,
+                    "radar_class": features.get("classification"),
+                    "lifecycle": signal.lifecycle,
+                    "score_bucket": "90+" if score >= 90 else "80-89" if score >= 80 else "70-79",
+                    "outcomes": {"120m": dict(outcome.outcome)} if outcome else {},
+                    "audit": {
+                        "entry_hit_at": audit.entry_hit_at if audit else None,
+                        "target1_hit_at": audit.target1_hit_at if audit else None,
+                        "target2_hit_at": audit.target2_hit_at if audit else None,
+                        "target3_hit_at": audit.target3_hit_at if audit else None,
+                        "ordering": audit.ordering if audit else "NONE",
+                        "result_classification": (
+                            audit.result_classification if audit else "PENDING"
+                        ),
+                    },
+                }
+            )
+        return result
+
     def daily(self, days: int = 7) -> list[dict[str, object]]:
-        records, _ = self.records(page_size=100)
-        # Analytics is intentionally bounded by fetching pages, not an unbounded UI response.
-        page = 2
-        while True:
-            chunk, _ = self.records(page=page, page_size=100)
-            if not chunk:
-                break
-            records.extend(chunk)
-            page += 1
+        records = self._analysis_rows()
         grouped: dict[date, list[dict[str, Any]]] = {}
         for row in records:
             grouped.setdefault(_local_day(row["signal_timestamp"]), []).append(row)
@@ -195,14 +225,7 @@ class SignalIntelligence:
         return output
 
     def analytics(self, group: str = "score") -> list[dict[str, object]]:
-        records: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            chunk, _ = self.records(page=page, page_size=100)
-            if not chunk:
-                break
-            records.extend(chunk)
-            page += 1
+        records = self._analysis_rows()
         buckets: dict[str, list[dict[str, Any]]] = {}
         for row in records:
             if group == "score":

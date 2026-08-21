@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -52,6 +52,13 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
         "ema9_distance": 1,
         "ema20_distance": 1,
         "disposition": "SIGNAL_CREATED",
+        "trade_plan_snapshot": {
+            "symbol": "ASELS",
+            "timestamp": stamp.isoformat(),
+            "status": "BREAKOUT_ONAYI",
+            "targets": [{"price": 104}, {"price": 106}, {"price": 108}],
+            "research_only": True,
+        },
     }
     with factory.begin() as session:
         for index in range(25):
@@ -117,8 +124,8 @@ def test_dashboard_aggregates_real_persisted_data(monkeypatch) -> None:  # type:
     opportunities = dashboard.dashboard_opportunities()
     assert opportunities["snapshot_id"]
     opportunity = opportunities["opportunities"][0]
-    assert (
-        dashboard._candidate_timestamp(opportunity["candidate"]) == opportunity["plan"]["timestamp"]
+    assert dashboard._candidate_timestamp(opportunity["candidate"]) == datetime.fromisoformat(
+        opportunity["plan"]["timestamp"]
     )
     assert dashboard.trade_plan("NONE")["status"] == "GECERSIZ"
     assert dashboard.symbol_detail("NONE") is None
@@ -184,47 +191,48 @@ def test_actionable_candidate_ranks_before_higher_waiting_score(monkeypatch) -> 
     assert [row["symbol"] for row in dashboard.candidates()] == ["READY", "WAIT"]
 
 
-def test_opportunity_plans_use_one_bounded_bar_query(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    db = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(db)
-    factory = sessionmaker(bind=db, expire_on_commit=False)
+def test_opportunity_read_uses_persisted_plans_without_financial_recalculation(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
     stamp = datetime.now(UTC)
-    with factory.begin() as session:
-        for symbol in ("ASELS", "TUPRS"):
-            for index in range(12):
-                session.add(
-                    MarketBarRow(
-                        symbol=symbol,
-                        timestamp=stamp.replace(microsecond=index + 1),
-                        open=99,
-                        high=101,
-                        low=98,
-                        close=100,
-                        volume=1000,
-                        timeframe="15m",
-                        provider_id="test",
-                    )
-                )
-    monkeypatch.setattr(dashboard, "SessionLocal", factory)
-    statements: list[str] = []
-    event.listen(
-        db, "before_cursor_execute", lambda _c, _u, statement, *_: statements.append(statement)
-    )
     rows = [
         {
             "symbol": symbol,
             "timestamp": stamp,
-            "price": 100,
-            "atr": 2,
-            "rvol": 2,
-            "breakout_distance": 0,
+            "trade_plan_snapshot": {
+                "symbol": symbol,
+                "timestamp": stamp,
+                "status": "GIRIS_BEKLENIYOR",
+                "research_only": True,
+            },
         }
         for symbol in ("ASELS", "TUPRS")
     ]
-    plans = dashboard._plans_for_candidates(rows)
-    bar_selects = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    plans = dashboard._persisted_plans(rows)
     assert set(plans) == {"ASELS", "TUPRS"}
-    assert len(bar_selects) == 1
+    assert all(plan["status"] == "GIRIS_BEKLENIYOR" for plan in plans.values())
+
+
+def test_snapshot_status_reads_metadata_without_plan_work(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    stamp = datetime.now(UTC)
+    db = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(db)
+    factory = sessionmaker(bind=db, expire_on_commit=False)
+    with factory.begin() as session:
+        session.add(
+            WorkerStateRow(
+                job_name="intraday_radar_scan",
+                status="HEALTHY",
+                detail={},
+                last_processed_bar=stamp,
+                last_success_at=stamp,
+            )
+        )
+    monkeypatch.setattr(dashboard, "SessionLocal", factory)
+    status = dashboard.dashboard_snapshot_status()
+    assert status["snapshot_id"]
+    assert status["data_timestamp"].replace(tzinfo=UTC) == stamp
+    assert status["generated_at"].replace(tzinfo=UTC) == stamp
 
 
 def test_dashboard_performance_excludes_acceptance_context(monkeypatch) -> None:  # type: ignore[no-untyped-def]
